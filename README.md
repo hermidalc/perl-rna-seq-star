@@ -101,6 +101,8 @@ Usage:
                              (default = star_grch38p2_d1_vd1_gtfv22)
         --gtf-file <file>    Genome annotation GTF file
                              (default = gencode.v22.annotation.gtf)
+        --use-sra-ftp        Use SRA FTP URL download instead of prefetch
+                             (default = false)
         --genome-shm         Use STAR genome index in shared memory
                              (default = false)
         --refresh-meta       Re-query SRA to update metadata cache

@@ -8,9 +8,11 @@ use Cwd qw(cwd);
 use Digest::MD5 qw(md5_hex);
 use File::Basename qw(fileparse);
 use File::Copy qw(move);
+use File::Fetch;
 use File::Path qw(make_path remove_tree);
 use File::Spec;
 use Getopt::Long qw(:config auto_help auto_version);
+use IPC::Cmd qw(can_run);
 use List::Util qw(max min notall uniq);
 use Parallel::ForkManager;
 use Pod::Usage qw(pod2usage);
@@ -37,7 +39,9 @@ select(STDERR); $| = 1;
 select(STDOUT); $| = 1;
 
 # config
-use constant SRA_FASTQ_SUFFIX_FMT => '_pass_';
+my $sra_ftp_run_url_prefix =
+    'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra/SRR/';
+my $fastq_dump_suffix_fmt = '_pass_';
 my @bam_rg2sra_fields = (
     { RG => 'ID', SRA => 'Run' },
     { RG => 'SM', SRA => 'Sample' },
@@ -55,6 +59,7 @@ my $tmp_dir = cwd();
 my $num_threads = $procs->max_physical;
 my $genome_dir = 'star_grch38p2_d1_vd1_gtfv22';
 my $gtf_file = 'gencode.v22.annotation.gtf';
+my $use_sra_ftp = 0;
 my $genome_shm = 0;
 my $refresh_meta = 0;
 my $query_only = 0;
@@ -76,6 +81,7 @@ GetOptions(
     'num-threads:i' => \$num_threads,
     'genome-dir:s' => \$genome_dir,
     'gtf-file:s' => \$gtf_file,
+    'use-sra-ftp' => \$use_sra_ftp,
     'genome-shm' => \$genome_shm,
     'refresh-meta' => \$refresh_meta,
     'query-only' => \$query_only,
@@ -169,7 +175,7 @@ for my $srr_meta (@{$srr_metadata}) {
     print "[$srr_id]\n";
     my $srr_dir = File::Spec->abs2rel("$tmp_dir/$srr_id");
     my @fastq_files = map {
-        "$srr_dir/${srr_id}".SRA_FASTQ_SUFFIX_FMT."$_.fastq.gz"
+        "$srr_dir/${srr_id}${fastq_dump_suffix_fmt}${_}.fastq.gz"
     } 1..2;
     my $star_bam_file_name = 'Aligned.out.bam';
     my $star_bam_file = "$srr_dir/$star_bam_file_name";
@@ -212,19 +218,50 @@ for my $srr_meta (@{$srr_metadata}) {
             }
         }
         if ($regen_all or !-f "$srr_dir/${srr_id}.sra") {
-            my $pf_cmd_str = "prefetch $srr_id -o '$srr_dir/${srr_id}.sra'";
-            print "Prefetching ${srr_id}.sra";
-            print "\n$pf_cmd_str" if $verbose or $debug;
-            if (!$dry_run) {
-                if (system($pf_cmd_str)) {
-                    exit(SIGINT) if ($? & 127) == SIGINT;
-                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                        ": prefetch failed (exit code ", $? >> 8, ")\n\n";
-                    next;
+            print "Downloading ${srr_id}.sra";
+            my $dl_cmd_str;
+            if ($use_sra_ftp) {
+                my $sra_ftp_run_url = join('',
+                    $sra_ftp_run_url_prefix, substr($srr_id, 0, 6),
+                    "/$srr_id/${srr_id}.sra",
+                );
+                if (my $wget = can_run('wget')) {
+                    $dl_cmd_str = "$wget -P $srr_dir $sra_ftp_run_url";
+                }
+                elsif (my $curl = can_run('curl')) {
+                    $dl_cmd_str =
+                        "$curl -o '$srr_dir/${srr_id}.sra' -L $sra_ftp_run_url";
+                }
+                else {
+                    print "No wget or curl, trying File::Fetch...\n";
+                    my $ff = File::Fetch->new(uri => $sra_ftp_run_url);
+                    if (!$dry_run) {
+                        if (!$ff->fetch(to => $srr_dir)) {
+                            exit(SIGINT) if ($? & 127) == SIGINT;
+                            warn +(
+                                -t STDERR ? colored('ERROR', 'red') : 'ERROR'
+                            ), ": fetch failed, ", $ff->error, "\n\n";
+                            next;
+                        }
+                    }
                 }
             }
             else {
-                print "\n";
+                $dl_cmd_str = "prefetch $srr_id -o '$srr_dir/${srr_id}.sra'";
+            }
+            if ($dl_cmd_str) {
+                print "\n$dl_cmd_str" if $verbose or $debug;
+                if (!$dry_run) {
+                    if (system($dl_cmd_str)) {
+                        exit(SIGINT) if ($? & 127) == SIGINT;
+                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                            ": download failed (exit code ", $? >> 8, ")\n\n";
+                        next;
+                    }
+                }
+                else {
+                    print "\n";
+                }
             }
         }
         else {
@@ -515,6 +552,8 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
                          (default = star_grch38p2_d1_vd1_gtfv22)
     --gtf-file <file>    Genome annotation GTF file
                          (default = gencode.v22.annotation.gtf)
+    --use-sra-ftp        Use SRA FTP URL download instead of prefetch
+                         (default = false)
     --genome-shm         Use STAR genome index in shared memory
                          (default = false)
     --refresh-meta       Re-query SRA to update metadata cache
