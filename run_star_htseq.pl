@@ -226,14 +226,14 @@ for my $srr_meta (@{$srr_metadata}) {
                     "/$srr_id/${srr_id}.sra",
                 );
                 if (my $wget = can_run('wget')) {
-                    $dl_cmd_str = "$wget -P $srr_dir $sra_ftp_run_url";
+                    $dl_cmd_str = "$wget -P '$srr_dir' $sra_ftp_run_url";
                 }
                 elsif (my $curl = can_run('curl')) {
                     $dl_cmd_str =
                         "$curl -o '$srr_dir/${srr_id}.sra' -L $sra_ftp_run_url";
                 }
                 else {
-                    print "No wget or curl, trying File::Fetch...\n";
+                    print "Using File::Fetch...\n";
                     my $ff = File::Fetch->new(uri => $sra_ftp_run_url);
                     if (!$dry_run) {
                         if (!$ff->fetch(to => $srr_dir)) {
@@ -251,6 +251,7 @@ for my $srr_meta (@{$srr_metadata}) {
             }
             if ($dl_cmd_str) {
                 print "\n$dl_cmd_str" if $verbose or $debug;
+                print "\n" unless $dl_cmd_str =~ /^prefetch /;
                 if (!$dry_run) {
                     if (system($dl_cmd_str)) {
                         exit(SIGINT) if ($? & 127) == SIGINT;
@@ -552,7 +553,7 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
                          (default = star_grch38p2_d1_vd1_gtfv22)
     --gtf-file <file>    Genome annotation GTF file
                          (default = gencode.v22.annotation.gtf)
-    --use-sra-ftp        Use SRA FTP URL download instead of prefetch
+    --use-sra-ftp        Use SRA direct FTP download instead of prefetch
                          (default = false)
     --genome-shm         Use STAR genome index in shared memory
                          (default = false)
