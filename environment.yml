@@ -12,6 +12,5 @@ dependencies:
   - perl-parallel-forkmanager
   - perl-text-csv
   - perl-unix-processors
-  - samtools
   - sra-tools
   - star
