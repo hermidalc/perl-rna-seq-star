@@ -146,8 +146,7 @@ The `run_star_htseq.pl` wrapper script encapsulates the following steps:
 
 Then for each SRR:
 
-2.  With `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
-3.  Download SRA vdb file (via direct FTP URL, fall back to SRA toolkit prefetch)
+2.  Download SRA .sra file (via direct FTP URL, fall back to SRA toolkit prefetch) or with `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
 3.  Validate SRA vdb file (with SRA toolkit)
 4.  Dump FASTQs from vdb (with parallel-fastq-dump wrapper to fastq-dump)
 5.  Run STAR alignment and gene expression quantification
