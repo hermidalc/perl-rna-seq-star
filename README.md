@@ -82,7 +82,7 @@ STAR \
 #### Wrapper script usage
 
 ```
-$ run_star_htseq.pl -h
+$ ./run_star_htseq.pl --help
 Usage:
      run_star_htseq.pl [options]
 
@@ -101,24 +101,26 @@ Usage:
                              (default = star_grch38p2_d1_vd1_gtfv22)
         --gtf-file <file>    Genome annotation GTF file
                              (default = gencode.v22.annotation.gtf)
-        --use-sra-ftp        Use SRA direct FTP download instead of prefetch
+        --star-opts <str>    Additional STAR options (quoted string)
+                             (default = none)
+        --keep <str>         Additional file types to keep (quoted string)
+                             (default = none, possible: all sra fastq bam)
+        --refresh-meta       Re-query SRA to update metadata cache
+                             (default = false)
+        --query-only         Query SRA and cache metadata then exit
+                             (default = false)
+        --use-ena-fastqs     Download ENA SRA FASTQs (with SRA fallback)
                              (default = false)
         --genome-shm         Use STAR genome index in shared memory
                              (default = false)
-        --refresh-meta       Re-query SRA to update metadata cache
-                             (default = false)
-        --query-only         Query SRA and then exit program
-                             (default = false)
         --regen-all          Regenerate all result files
-                             (default = false)
-        --keep-all           Keep all result files
-                             (default = false)
-        --keep-bams          Keep STAR BAMs
                              (default = false)
         --gen-tx-bam         Generate STAR transcriptome-aligned BAM
                              (default = false)
-        --no-htseq           Skip HTSeq quantification
-                             (default = false)
+        --htseq              Run HTSeq read quantification
+                             (default = true, false use --no-htseq)
+        --htseq-par          Run HTSeq in parallel batches
+                             (default = true, false use --no-htseq-par)
         --htseq-mode         HTSeq --mode option
                              (default = intersection-nonempty)
         --htseq-stranded     HTSeq --stranded option
@@ -144,7 +146,8 @@ The `run_star_htseq.pl` wrapper script encapsulates the following steps:
 
 Then for each SRR:
 
-2.  Prefetch SRA vdb file (with SRA toolkit)
+2.  With `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
+3.  Download SRA vdb file (via direct FTP URL, fall back to SRA toolkit prefetch)
 3.  Validate SRA vdb file (with SRA toolkit)
 4.  Dump FASTQs from vdb (with parallel-fastq-dump wrapper to fastq-dump)
 5.  Run STAR alignment and gene expression quantification
@@ -152,11 +155,12 @@ Then for each SRR:
 
 The wrapper script also has some useful features, for example:
 
-*   It automatically caches downloaded SRA metadata for your query and will reuse cached metadata for the same SRA query.  Metadata can be refreshed with `--refresh-meta`.
-*   It automatically looks for and reuses any existing completed intermediate files from each processing step in case e.g. the script got killed. You simply restart the script with same parameters and it will come right back to where it left off. This can be overriden with `--regen-all`.
-*   If the processing fails for any SRR it will output that there was an error and automatically move on to the next.
-*   It saves a ton of space by not keeping intermediate result files after finishing processing for each SRR.  This can be overriden with the options `--keep-all` or for just BAMs `--keep-bams`.
-*   In my environment I've found HTSeq to be the slowest step in the pipeline by far, also because it is only single-threaded while the other compute intensive steps are parallelized.  So to greatly improve performance the wrapper script can run the HTSeq jobs in parallel at the end if you specify the option `--keep-bams`, though beware that this will take up a lot more space.
+*   Automatically caches downloaded SRA metadata for your query and will reuse cached metadata for the same SRA query.  Metadata can be refreshed with `--refresh-meta`.
+*   Automatically looks for and reuses any existing completed intermediate files from each processing step in case e.g. the script got killed. You simply restart the script with same parameters and it will come right back to where it left off. This can be overriden with `--regen-all`.
+*   If processing fails for any run it will output that there was an error and automatically move on to the next run.
+*   It saves a ton of space by only keeping the required result files necessary to complete all processing steps for each run.  This can be overriden by specifying file types to keep using  `--keep ` option.
+*   I've found HTSeq to be the slowest step in the pipeline by far, also because it is only single-threaded while the other compute intensive steps are parallelized.  So to greatly improve performance the wrapper script by default runs HTSeq jobs in parallel batches after `--num-threads` runs have completed.  This can be overriden with `--no-htseq-par`.
+*   HTSeq quantification can be skipped with `--no-htseq` and only STAR quantification files will be generated.
 
 ## References
 
