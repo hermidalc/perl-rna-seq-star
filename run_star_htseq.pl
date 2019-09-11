@@ -655,7 +655,10 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         push @srrs_completed, $srr_id;
     }
     if (!$dry_run and !$keep{all} and -d $tmp_srr_dir) {
-        if ($htseq and $htseq_par and !$keep{bam}) {
+        if (
+            $htseq and $htseq_par and !$keep{bam} and
+            $run_idx != $#{$srr_meta}
+        ) {
             find({
                 by_depth => 1,
                 wanted => sub {
