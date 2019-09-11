@@ -96,7 +96,7 @@ Usage:
         --tmp-dir <dir>      Temporary working directory
                              (default = current dir)
         --num-threads <n>    Number of parallel threads
-                             (default = num cpus)
+                             (default = -1 which means all cpus)
         --genome-dir <dir>   STAR genome index directory
                              (default = star_grch38p2_d1_vd1_gtfv22)
         --gtf-file <file>    Genome annotation GTF file

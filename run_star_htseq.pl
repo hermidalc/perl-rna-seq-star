@@ -41,6 +41,9 @@ select(STDERR); $| = 1;
 select(STDOUT); $| = 1;
 
 # config
+my @states = qw(
+    TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR MV_BAM MV_TX_BAM MV_ALL HTSEQ
+);
 my $sra_ftp_run_url_prefix =
     'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra/SRR';
 my $ena_ftp_fastq_url_prefix = 'ftp://ftp.sra.ebi.ac.uk/vol1/fastq';
@@ -58,7 +61,7 @@ my $sra_query = '';
 my $srr_file = '';
 my $out_dir = File::Spec->abs2rel();
 my $tmp_dir = cwd();
-my $num_threads = $procs->max_physical;
+my $num_threads = -1;
 my $genome_dir = 'star_grch38p2_d1_vd1_gtfv22';
 my $gtf_file = 'gencode.v22.annotation.gtf';
 my $star_opts = '';
@@ -94,8 +97,8 @@ GetOptions(
     'gen-tx-bam' => \$gen_tx_bam,
     'htseq!' => \$htseq,
     'htseq-par!' => \$htseq_par,
-    'htseq-mode' => \$htseq_mode,
-    'htseq-stranded' => \$htseq_stranded,
+    'htseq-mode:s' => \$htseq_mode,
+    'htseq-stranded:s' => \$htseq_stranded,
     'dry-run' => \$dry_run,
     'verbose' => \$verbose,
     'debug' => \$debug,
@@ -108,8 +111,14 @@ if (!$sra_query) {
         pod2usage(-message => 'Invalid --srr-file');
     }
 }
-if ($num_threads =~ /^\d+$/) {
-    $num_threads = min(max(0, $num_threads), $procs->max_physical);
+if ($num_threads =~ /^-?\d+$/) {
+    $num_threads = $num_threads == -1
+        ? $procs->max_physical
+        : $num_threads > 0
+            ? min($num_threads, $procs->max_physical)
+            : $num_threads < -1
+                ? max(1, $procs->max_physical + $num_threads + 1)
+                : 1;
 }
 else {
     pod2usage(-message => '--num-threads must be an integer');
@@ -180,198 +189,231 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     my $srr_id = $srr_meta->[$run_idx]->{'Run'};
     print "[$srr_id]\n";
     my $tmp_srr_dir = File::Spec->abs2rel("$tmp_dir/$srr_id");
-    my $out_srr_dir = $out_dir ne $tmp_dir
-        ? File::Spec->abs2rel("$out_dir/$srr_id")
-        : $tmp_srr_dir;
+    my $out_srr_dir = File::Spec->abs2rel("$out_dir/$srr_id");
     my $state_file = "$tmp_srr_dir/.state";
-    my $state = (!$regen_all and -f $state_file)
+    my $init_state = (!$regen_all and -f $state_file)
         ? read_state($state_file) : {};
     my %tmp_file_name = (
         'sra' => "$srr_id.sra",
         (map {
-            +"fastq$_" =>
-            $srr_id .
-            ($use_ena_fastqs and !$state->{SRA_FASTQ} ? '_' : '_pass_') .
-            "$_.fastq.gz"
+            +"fastq$_" => join('',
+                $srr_id,
+                ($use_ena_fastqs and !$init_state->{SRA_FASTQ})
+                    ? '_' : '_pass_',
+                "$_.fastq.gz"
+            )
         } 1..2),
         'star_bam' => 'Aligned.out.bam',
         'star_tx_bam' => 'Aligned.toTranscriptome.out.bam',
         'star_counts' => 'ReadsPerGene.out.tab',
         'htseq_counts' => 'htseq.counts.txt',
     );
-    my %out_file_name = (
-        'star_bam' => "${srr_id}.Aligned.bam",
-        'star_tx_bam' => "${srr_id}.Aligned.toTranscriptome.bam",
-        'star_counts' => "${srr_id}.star.counts.txt",
-        'htseq_counts' => "${srr_id}.htseq.counts.txt",
-    );
     my %tmp_file = map {
         $_ => "$tmp_srr_dir/$tmp_file_name{$_}"
     } keys %tmp_file_name;
-    my %out_file = $keep{all}
-        ? map {
-            $_ => "$out_srr_dir/$tmp_file_name{$_}"
-        } keys %tmp_file_name
-        : $keep{bam}
-            ? map {
-                $_ => "$out_dir/$out_file_name{$_}"
-            } keys %out_file_name
-            : (
-                'star_bam' => "$tmp_srr_dir/$tmp_file_name{'star_bam'}",
-                'star_tx_bam' => "$tmp_srr_dir/$tmp_file_name{'star_tx_bam'}",
-                'star_counts' => "$out_dir/$out_file_name{'star_counts'}",
-                'htseq_counts' => "$out_dir/$out_file_name{'htseq_counts'}",
-            );
-    if (!$regen_all and !-f $state_file) {
-        if ($keep{bam}) {
+    my (%out_file_name, %out_file);
+    if ($keep{all}) {
+        %out_file_name = %tmp_file_name;
+        %out_file = map {
+            $_ => "$out_srr_dir/$out_file_name{$_}"
+        } keys %out_file_name;
+    }
+    elsif ($keep{bam}) {
+        %out_file_name = (
+            'star_bam' => "${srr_id}.Aligned.bam",
+            'star_tx_bam' => "${srr_id}.Aligned.toTranscriptome.bam",
+            'star_counts' => "${srr_id}.star.counts.txt",
+            'htseq_counts' => "${srr_id}.htseq.counts.txt",
+        );
+        %out_file = map {
+            $_ => "$out_dir/$out_file_name{$_}"
+        } keys %out_file_name;
+        if (!$regen_all and !-f $state_file) {
             if (-f $out_file{'star_bam'} and
                 (!$gen_tx_bam or -f $out_file{'star_tx_bam'}) and
                 -f $out_file{'star_counts'}
             ) {
-                $state = { map { $_ => 1 } qw(
-                    DIR SRA SRA_FASTQ STAR MV_BAM MV_TX_BAM MV_ALL
-                ) };
+                $init_state = {
+                    map { $_ => 1 } grep {
+                        ($use_ena_fastqs
+                            ? $_ !~ /^SRA(_FASTQ)?$/
+                            : $_ ne 'ENA_FASTQ')
+                        && $_ ne 'HTSEQ'
+                    } @states
+                };
                 if ($htseq and -f $out_file{'htseq_counts'}) {
-                    $state->{HTSEQ}++;
+                    $init_state->{HTSEQ}++;
                 }
-            }
-        }
-        elsif (-f $out_file{'star_counts'}) {
-            $state = { map { $_ => 1 } qw(
-                TMP_DIR SRA SRA_FASTQ STAR MV_BAM MV_TX_BAM MV_ALL
-            ) };
-            if ($htseq and -f $out_file{'htseq_counts'}) {
-                $state->{HTSEQ}++;
             }
         }
     }
-    if (!$state->{STAR}) {
-        if (!$state->{TMP_DIR}) {
-            if (-d $tmp_srr_dir) {
-                print "Cleaning directory $tmp_srr_dir\n";
-                remove_tree($tmp_srr_dir, { safe => 1 }) unless $dry_run;
-            }
-            else {
-                print "Creating directory $tmp_srr_dir\n";
-                make_path($tmp_srr_dir) unless $dry_run;
-            }
-            $state->{TMP_DIR}++;
-            write_state($state_file, $state) unless $dry_run;
+    else {
+        %out_file_name = (
+            'star_counts' => "${srr_id}.star.counts.txt",
+            'htseq_counts' => "${srr_id}.htseq.counts.txt",
+        );
+        %out_file = map {
+            $_ => "$out_dir/$out_file_name{$_}"
+        } keys %out_file_name;
+        for my $bam_type (qw(star_bam star_tx_bam)) {
+            $out_file_name{$bam_type} = $tmp_file_name{$bam_type};
+            $out_file{$bam_type} = $tmp_file{$bam_type};
         }
-        else {
-            print "Using existing directory $tmp_srr_dir\n";
-        }
-        if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
-            if (!$state->{ENA_FASTQ}) {
-                my $fastqs_downloaded = 0;
-                for my $n (1..2) {
-                    print "Downloading $tmp_file_name{\"fastq$n\"}";
-                    if (download_url(
-                        join('/',
-                            $ena_ftp_fastq_url_prefix,
-                            substr($srr_id, 0, 6),
-                            '00'.substr($srr_id, -1),
-                            $srr_id,
-                            $tmp_file_name{"fastq$n"},
-                        ),
-                        $tmp_srr_dir,
-                    )) {
-                        if (++$fastqs_downloaded == 2) {
-                            $state->{ENA_FASTQ}++;
-                            write_state($state_file, $state) unless $dry_run;
-                        }
-                    }
+        if (!$regen_all and !-f $state_file) {
+            if ($htseq) {
+                if (
+                    -f $out_file{'htseq_counts'} and
+                    -f $out_file{'star_counts'}
+                ) {
+                    $init_state = {
+                        map { $_ => 1 } grep {
+                            ($use_ena_fastqs
+                                ? $_ !~ /^SRA(_FASTQ)?$/
+                                : $_ ne 'ENA_FASTQ')
+                        } @states
+                    };
                 }
             }
-            else {
-                print "Using existing ",
-                      join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
+            elsif (-f $out_file{'star_counts'}) {
+                $init_state = {
+                    map { $_ => 1 } grep {
+                        ($use_ena_fastqs
+                            ? $_ !~ /^SRA(_FASTQ)?$/
+                            : $_ ne 'ENA_FASTQ')
+                        && $_ ne 'HTSEQ'
+                    } @states
+                };
             }
         }
+    }
+    my $state = { %{$init_state} };
+    if (!$state->{TMP_DIR}) {
+        if (-d $tmp_srr_dir) {
+            print "Cleaning directory $tmp_srr_dir\n";
+            remove_tree($tmp_srr_dir, { safe => 1 }) unless $dry_run;
+        }
+        else {
+            print "Creating directory $tmp_srr_dir\n";
+            make_path($tmp_srr_dir) unless $dry_run;
+        }
+        $state->{TMP_DIR}++;
+        write_state($state_file, $state) unless $dry_run;
+    }
+    elsif (!$state->{STAR} or !$state->{MV_ALL}) {
+        print "Using existing directory $tmp_srr_dir\n";
+    }
+    if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
         if (!$state->{ENA_FASTQ}) {
-            if (!$state->{SRA}) {
-                print "Downloading $tmp_file_name{'sra'}";
-                if (!download_url(
+            my $fastqs_downloaded = 0;
+            for my $n (1..2) {
+                print "Downloading $tmp_file_name{\"fastq$n\"}";
+                if (download_url(
                     join('/',
-                        $sra_ftp_run_url_prefix,
+                        $ena_ftp_fastq_url_prefix,
                         substr($srr_id, 0, 6),
+                        '00'.substr($srr_id, -1),
                         $srr_id,
-                        "$tmp_file_name{'sra'}",
+                        $tmp_file_name{"fastq$n"},
                     ),
                     $tmp_srr_dir,
                 )) {
-                    my $dl_cmd_str =
-                        "prefetch $srr_id -o '$tmp_file{'sra'}'";
-                    print "\n$dl_cmd_str" if $verbose or $debug;
-                    if (!$dry_run) {
-                        if (system($dl_cmd_str)) {
-                            exit($?) if ($? & 127) == SIGINT;
-                            warn +(
-                                -t STDERR ? colored('ERROR', 'red') : 'ERROR'
-                            ), ": download failed (exit code ", $? >> 8, ")\n\n";
-                            next SRR;
-                        }
-                    }
-                    else {
-                        print "\n";
+                    if (++$fastqs_downloaded == 2) {
+                        $state->{ENA_FASTQ}++;
+                        write_state($state_file, $state) unless $dry_run;
                     }
                 }
-                my $val_cmd_str = join(' ',
-                    "vdb-validate",
-                    "-x", "-B yes", "-I yes", "-C yes",
-                    "'$tmp_file{'sra'}'",
-                );
-                print "Validating $tmp_file_name{'sra'}\n";
-                print "$val_cmd_str\n" if $verbose or $debug;
-                if (!$dry_run) {
-                    if (system($val_cmd_str)) {
-                        exit($?) if ($? & 127) == SIGINT;
-                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                            ": vdb-validate failed (exit code ", $? >> 8,
-                            ")\n\n";
-                        next SRR;
-                    }
-                }
-                $state->{SRA}++;
-                write_state($state_file, $state) unless $dry_run;
-            }
-            else {
-                print "Using existing $tmp_file_name{'sra'}\n";
-            }
-            if (!$state->{SRA_FASTQ}) {
-                my $pfq_cmd_str = join(' ',
-                    "parallel-fastq-dump",
-                    "--threads $num_threads",
-                    "--sra-id '$tmp_file{'sra'}'",
-                    "--outdir '$tmp_srr_dir'",
-                    "--tmpdir '$tmp_srr_dir'",
-                    "--gzip",
-                    "--skip-technical",
-                    "--readids",
-                    "--read-filter pass",
-                    "--dumpbase",
-                    "--split-3",
-                    "--clip",
-                );
-                print "Generating $tmp_file_name{'sra'} FASTQs\n";
-                print "$pfq_cmd_str\n" if $verbose or $debug;
-                if (!$dry_run) {
-                    if (system($pfq_cmd_str)) {
-                        exit($?) if ($? & 127) == SIGINT;
-                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                            ": parallel-fastq-dump failed (exit code ",
-                            $? >> 8, ")\n\n";
-                        next SRR;
-                    }
-                }
-                $state->{SRA_FASTQ}++;
-                write_state($state_file, $state) unless $dry_run;
-            }
-            else {
-                print "Using existing ",
-                      join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
             }
         }
+        elsif (!$state->{STAR}) {
+            print "Using existing ",
+                  join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
+        }
+    }
+    if (!$state->{ENA_FASTQ}) {
+        if (!$state->{SRA}) {
+            print "Downloading $tmp_file_name{'sra'}";
+            if (!download_url(
+                join('/',
+                    $sra_ftp_run_url_prefix,
+                    substr($srr_id, 0, 6),
+                    $srr_id,
+                    "$tmp_file_name{'sra'}",
+                ),
+                $tmp_srr_dir,
+            )) {
+                my $dl_cmd_str =
+                    "prefetch $srr_id -o '$tmp_file{'sra'}'";
+                print "\n$dl_cmd_str" if $verbose or $debug;
+                if (!$dry_run) {
+                    if (system($dl_cmd_str)) {
+                        exit($?) if ($? & 127) == SIGINT;
+                        warn +(
+                            -t STDERR ? colored('ERROR', 'red') : 'ERROR'
+                        ), ": download failed (exit code ", $? >> 8, ")\n\n";
+                        next SRR;
+                    }
+                }
+                else {
+                    print "\n";
+                }
+            }
+            my $val_cmd_str = join(' ',
+                "vdb-validate",
+                "-x", "-B yes", "-I yes", "-C yes",
+                "'$tmp_file{'sra'}'",
+            );
+            print "Validating $tmp_file_name{'sra'}\n";
+            print "$val_cmd_str\n" if $verbose or $debug;
+            if (!$dry_run) {
+                if (system($val_cmd_str)) {
+                    exit($?) if ($? & 127) == SIGINT;
+                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                        ": vdb-validate failed (exit code ", $? >> 8,
+                        ")\n\n";
+                    next SRR;
+                }
+            }
+            $state->{SRA}++;
+            write_state($state_file, $state) unless $dry_run;
+        }
+        elsif (!$state->{SRA_FASTQ}) {
+            print "Using existing $tmp_file_name{'sra'}\n";
+        }
+        if (!$state->{SRA_FASTQ}) {
+            my $pfq_cmd_str = join(' ',
+                "parallel-fastq-dump",
+                "--threads $num_threads",
+                "--sra-id '$tmp_file{'sra'}'",
+                "--outdir '$tmp_srr_dir'",
+                "--tmpdir '$tmp_srr_dir'",
+                "--gzip",
+                "--skip-technical",
+                "--readids",
+                "--read-filter pass",
+                "--dumpbase",
+                "--split-3",
+                "--clip",
+            );
+            print "Generating $tmp_file_name{'sra'} FASTQs\n";
+            print "$pfq_cmd_str\n" if $verbose or $debug;
+            if (!$dry_run) {
+                if (system($pfq_cmd_str)) {
+                    exit($?) if ($? & 127) == SIGINT;
+                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                        ": parallel-fastq-dump failed (exit code ",
+                        $? >> 8, ")\n\n";
+                    next SRR;
+                }
+            }
+            $state->{SRA_FASTQ}++;
+            write_state($state_file, $state) unless $dry_run;
+        }
+        elsif (!$state->{STAR}) {
+            print "Using existing ",
+                  join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
+        }
+    }
+    if (!$state->{STAR}) {
         my @bam_rg_fields = map {
             "\"$_->{'RG'}:$srr_meta->[$run_idx]->{$_->{'SRA'}}\""
         } grep {
@@ -430,17 +472,10 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         $state->{STAR}++;
         write_state($state_file, $state) unless $dry_run;
     }
-    elsif ($htseq and !$state->{HTSEQ} and !$state->{MV_ALL}) {
-        print "Using existing $out_file_name{'star_bam'}\n";
-        print "Using existing $out_file_name{'star_tx_bam'}\n" if $gen_tx_bam;
-    }
     if ($keep{all}) {
         if (!$state->{MV_ALL}) {
             if ($out_srr_dir ne $tmp_srr_dir) {
-                if (move_data(
-                    $tmp_srr_dir, $tmp_srr_dir,
-                    $out_srr_dir, $out_srr_dir,
-                )) {
+                if (move_data($tmp_srr_dir, $out_srr_dir)) {
                     $state->{MV_ALL}++;
                     write_state($state_file, $state) unless $dry_run;
                 }
@@ -455,10 +490,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     }
     elsif ($keep{bam}) {
         if (!$state->{MV_BAM}) {
-            if (move_data(
-                $tmp_file{'star_bam'}, $tmp_file_name{'star_bam'},
-                $out_file{'star_bam'}, $out_file_name{'star_bam'},
-            )) {
+            if (move_data($tmp_file{'star_bam'}, $out_file{'star_bam'})) {
                 $state->{MV_BAM}++;
                 write_state($state_file, $state) unless $dry_run;
             }
@@ -472,8 +504,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         if ($gen_tx_bam) {
             if (!$state->{MV_TX_BAM}) {
                 if (move_data(
-                    $tmp_file{'star_tx_bam'}, $tmp_file_name{'star_tx_bam'},
-                    $out_file{'star_tx_bam'}, $out_file_name{'star_tx_bam'},
+                    $tmp_file{'star_tx_bam'}, $out_file{'star_tx_bam'}
                 )) {
                     $state->{MV_TX_BAM}++;
                     write_state($state_file, $state) unless $dry_run;
@@ -490,8 +521,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     if (!$keep{all} or $keep{bam}) {
         if (!$state->{MV_ALL}) {
             if (move_data(
-                $tmp_file{'star_counts'}, $tmp_file_name{'star_counts'},
-                $out_file{'star_counts'}, $out_file_name{'star_counts'},
+                $tmp_file{'star_counts'}, $out_file{'star_counts'}
             )) {
                 $state->{MV_ALL}++;
                 write_state($state_file, $state) unless $dry_run;
@@ -524,6 +554,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 push @htseq_run_data, {
                     'srr_id' => $srr_id,
                     'cmd_str' => $htseq_cmd_str,
+                    'out_file_name' => $out_file_name{'htseq_counts'},
                     'out_file' => $out_file{'htseq_counts'},
                     'state' => $state,
                     'state_file' => $state_file,
@@ -545,34 +576,33 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         print "[$htseq_run->{'srr_id'}] ",
                               "$htseq_run->{'cmd_str'}\n"
                               if $verbose or $debug;
+                        my $htseq_counts;
                         my $exit_code = 0;
                         if (!$dry_run) {
-                            my $htseq_counts = `$htseq_run->{'cmd_str'}`;
-                            print "[$htseq_run->{'srr_id'}] ";
-                            if ($?) {
-                                if ($? & 127 == SIGINT) {
-                                    $exit_code = $?;
-                                    warn "htseq-count interrupted\n";
-                                }
-                                else {
-                                    $exit_code = $? >> 8;
-                                    warn +(-t STDERR
-                                        ? colored('ERROR', 'red') :'ERROR'
-                                    ), ": htseq-count failed (exit code ",
-                                        $exit_code, ")\n";
-                                }
+                            $htseq_counts = `$htseq_run->{'cmd_str'}`;
+                            $exit_code = $?;
+                        }
+                        if ($exit_code) {
+                            if (($exit_code & 127) == SIGINT) {
+                                warn "htseq-count interrupted\n";
                             }
                             else {
+                                warn +(-t STDERR
+                                    ? colored('ERROR', 'red') :'ERROR'
+                                ), ": htseq-count failed (exit code ",
+                                    $exit_code >> 8, ")\n";
+                            }
+                        }
+                        else {
+                            print "[$htseq_run->{'srr_id'}] ",
+                                  "Writing $htseq_run->{'out_file_name'}\n";
+                            if (!$dry_run) {
                                 open(my $fh, '>', $htseq_run->{'out_file'});
                                 print $fh $htseq_counts;
                                 close($fh);
                             }
-                        }
-                        if (!$exit_code) {
-                            print "[$htseq_run->{'srr_id'}] ",
-                                  "Finished htseq-count\n";
+                            $htseq_run->{'state'}->{HTSEQ}++;
                             if (!$dry_run and -f $htseq_run->{'state_file'}) {
-                                $htseq_run->{'state'}->{HTSEQ}++;
                                 write_state(
                                     $htseq_run->{'state_file'},
                                     $htseq_run->{'state'},
@@ -586,26 +616,35 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 }
             }
             else {
+                print "Using existing $out_file_name{'star_bam'}\n"
+                    if $init_state->{STAR};
                 print "Running HTSeq quantification\n";
                 print "$htseq_cmd_str\n" if $verbose or $debug;
+                my $htseq_counts;
+                my $exit_code = 0;
                 if (!$dry_run) {
-                    open(my $fh, '>', $out_file{'htseq_counts'});
-                    my $htseq_counts = `$htseq_cmd_str`;
-                    if ($?) {
-                        exit($?) if ($? & 127) == SIGINT;
-                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                            ": htseq-count failed (exit code ", $? >> 8,
-                            ")\n\n";
-                        next SRR;
-                    }
-                    else {
-                        print $fh $htseq_counts;
-                    }
-                    close($fh);
+                    $htseq_counts = `$htseq_cmd_str`;
+                    $exit_code = $?;
                 }
-                $state->{HTSEQ}++;
-                write_state($state_file, $state) unless $dry_run;
-                push @srrs_completed, $srr_id;
+                if ($exit_code) {
+                    exit($exit_code) if ($exit_code & 127) == SIGINT;
+                    warn +(-t STDERR
+                        ? colored('ERROR', 'red') :'ERROR'
+                    ), ": htseq-count failed (exit code ",
+                        $exit_code >> 8, ")\n";
+                    next SRR;
+                }
+                else {
+                    print "Writing $out_file_name{'htseq_counts'}\n";
+                    if (!$dry_run) {
+                        open(my $fh, '>', $out_file{'htseq_counts'});
+                        print $fh $htseq_counts;
+                        close($fh);
+                    }
+                    $state->{HTSEQ}++;
+                    write_state($state_file, $state) unless $dry_run;
+                    push @srrs_completed, $srr_id;
+                }
             }
         }
         else {
@@ -691,8 +730,8 @@ sub download_url {
 }
 
 sub move_data {
-    my ($src, $src_name, $dest, $dest_name) = @_;
-    print "Moving $src_name -> $dest_name\n";
+    my ($src, $dest) = @_;
+    print "Moving $src -> $dest\n";
     if (!$dry_run) {
         if (!move($src, $dest)) {
             exit($?) if ($? & 127) == SIGINT;
@@ -725,7 +764,7 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
     --tmp-dir <dir>      Temporary working directory
                          (default = current dir)
     --num-threads <n>    Number of parallel threads
-                         (default = num cpus)
+                         (default = -1 which means all cpus)
     --genome-dir <dir>   STAR genome index directory
                          (default = star_grch38p2_d1_vd1_gtfv22)
     --gtf-file <file>    Genome annotation GTF file
