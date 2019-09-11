@@ -190,6 +190,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     print "[$srr_id]\n";
     my $tmp_srr_dir = File::Spec->abs2rel("$tmp_dir/$srr_id");
     my $out_srr_dir = File::Spec->abs2rel("$out_dir/$srr_id");
+    my $state_file = "$tmp_srr_dir/.state";
+    my $init_state = (!$regen_all and -f $state_file)
+        ? read_state($state_file) : {};
     my %tmp_file_name = (
         'sra' => "$srr_id.sra",
         (map {
@@ -204,13 +207,10 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         'star_tx_bam' => 'Aligned.toTranscriptome.out.bam',
         'star_counts' => 'ReadsPerGene.out.tab',
         'htseq_counts' => 'htseq.counts.txt',
-        'state' => '.state',
     );
     my %tmp_file = map {
         $_ => "$tmp_srr_dir/$tmp_file_name{$_}"
     } keys %tmp_file_name;
-    my $init_state = (!$regen_all and -f $tmp_file{'state'})
-        ? read_state($tmp_file{'state'}) : {};
     my (%out_file_name, %out_file);
     if ($keep{all}) {
         %out_file_name = %tmp_file_name;
@@ -228,7 +228,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         %out_file = map {
             $_ => "$out_dir/$out_file_name{$_}"
         } keys %out_file_name;
-        if (!$regen_all and !-f $tmp_file{'state'}) {
+        if (!$regen_all and !-f $state_file) {
             if (-f $out_file{'star_bam'} and
                 (!$gen_tx_bam or -f $out_file{'star_tx_bam'}) and
                 -f $out_file{'star_counts'}
@@ -259,7 +259,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             $out_file_name{$bam_type} = $tmp_file_name{$bam_type};
             $out_file{$bam_type} = $tmp_file{$bam_type};
         }
-        if (!$regen_all and !-f $tmp_file{'state'}) {
+        if (!$regen_all and !-f $state_file) {
             if ($htseq) {
                 if (
                     -f $out_file{'htseq_counts'} and
@@ -297,7 +297,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             make_path($tmp_srr_dir) unless $dry_run;
         }
         $state->{TMP_DIR}++;
-        write_state($tmp_file{'state'}, $state) unless $dry_run;
+        write_state($state_file, $state) unless $dry_run;
     }
     elsif (!$state->{STAR} or !$state->{MV_ALL}) {
         print "Using existing directory $tmp_srr_dir\n";
@@ -319,8 +319,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 )) {
                     if (++$fastqs_downloaded == 2) {
                         $state->{ENA_FASTQ}++;
-                        write_state($tmp_file{'state'}, $state)
-                            unless $dry_run;
+                        write_state($state_file, $state) unless $dry_run;
                     }
                 }
             }
@@ -375,7 +374,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 }
             }
             $state->{SRA}++;
-            write_state($tmp_file{'state'}, $state) unless $dry_run;
+            write_state($state_file, $state) unless $dry_run;
         }
         elsif (!$state->{SRA_FASTQ}) {
             print "Using existing $tmp_file_name{'sra'}\n";
@@ -407,7 +406,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 }
             }
             $state->{SRA_FASTQ}++;
-            write_state($tmp_file{'state'}, $state) unless $dry_run;
+            write_state($state_file, $state) unless $dry_run;
         }
         elsif (!$state->{STAR}) {
             print "Using existing ",
@@ -471,14 +470,14 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             }
         }
         $state->{STAR}++;
-        write_state($tmp_file{'state'}, $state) unless $dry_run;
+        write_state($state_file, $state) unless $dry_run;
     }
     if ($keep{all}) {
         if (!$state->{MV_ALL}) {
             if ($out_srr_dir ne $tmp_srr_dir) {
                 if (move_data($tmp_srr_dir, $out_srr_dir)) {
                     $state->{MV_ALL}++;
-                    write_state($tmp_file{'state'}, $state) unless $dry_run;
+                    write_state($state_file, $state) unless $dry_run;
                 }
                 else {
                     next SRR;
@@ -493,7 +492,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         if (!$state->{MV_BAM}) {
             if (move_data($tmp_file{'star_bam'}, $out_file{'star_bam'})) {
                 $state->{MV_BAM}++;
-                write_state($tmp_file{'state'}, $state) unless $dry_run;
+                write_state($state_file, $state) unless $dry_run;
             }
             else {
                 next SRR;
@@ -508,7 +507,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     $tmp_file{'star_tx_bam'}, $out_file{'star_tx_bam'}
                 )) {
                     $state->{MV_TX_BAM}++;
-                    write_state($tmp_file{'state'}, $state) unless $dry_run;
+                    write_state($state_file, $state) unless $dry_run;
                 }
                 else {
                     next SRR;
@@ -525,7 +524,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 $tmp_file{'star_counts'}, $out_file{'star_counts'}
             )) {
                 $state->{MV_ALL}++;
-                write_state($tmp_file{'state'}, $state) unless $dry_run;
+                write_state($state_file, $state) unless $dry_run;
             }
             else {
                 next SRR;
@@ -558,7 +557,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     'out_file_name' => $out_file_name{'htseq_counts'},
                     'out_file' => $out_file{'htseq_counts'},
                     'state' => $state,
-                    'state_file' => $tmp_file{'state'},
+                    'state_file' => $state_file,
                 };
                 if (
                     scalar(@htseq_run_data) % $num_threads == 0 or
@@ -643,7 +642,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         close($fh);
                     }
                     $state->{HTSEQ}++;
-                    write_state($tmp_file{'state'}, $state) unless $dry_run;
+                    write_state($state_file, $state) unless $dry_run;
                     push @srrs_completed, $srr_id;
                 }
             }
@@ -666,7 +665,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     if (-f) {
                         return if $_ eq $tmp_file{'star_bam'} or
                                   $_ eq $tmp_file{'star_tx_bam'} or
-                                  $_ eq $tmp_file{'state'};
+                                  $_ eq $state_file;
                         unlink $_;
                     }
                     elsif (-d and $_ ne $tmp_srr_dir) {
