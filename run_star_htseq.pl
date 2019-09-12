@@ -374,6 +374,10 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         write_state($state_file, $state) unless $dry_run;
                     }
                 }
+                else {
+                    print "Removing $tmp_file_name{\"fastq$n\"}\n";
+                    unlink $tmp_file{"fastq$n"};
+                }
             }
         }
         elsif (!$state->{STAR}) {
@@ -393,6 +397,8 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 ),
                 $tmp_srr_dir,
             )) {
+                print "Removing $tmp_file_name{'sra'}";
+                unlink $tmp_file{'sra'};
                 my $dl_cmd_str =
                     "prefetch $srr_id -o '$tmp_file{'sra'}'";
                 print "\n$dl_cmd_str" if $verbose or $debug;
@@ -771,7 +777,7 @@ sub download_url {
             if (system($dl_cmd_str)) {
                 exit($?) if ($? & 127) == SIGINT;
                 warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                    ": download failed (exit code ", $? >> 8, ")\n\n";
+                    ": download failed (exit code ", $? >> 8, ")\n";
                 return 0;
             }
         }
@@ -784,7 +790,7 @@ sub download_url {
                 exit($?) if ($? & 127) == SIGINT;
                 warn +(
                     -t STDERR ? colored('ERROR', 'red') : 'ERROR'
-                ), ": fetch failed, ", $ff->error, "\n\n";
+                ), ": fetch failed, ", $ff->error, "\n";
                 return 0;
             }
         }
