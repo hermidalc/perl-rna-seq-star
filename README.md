@@ -87,49 +87,58 @@ Usage:
      run_star_htseq.pl [options]
 
      Options:
-        --sra-query <str>    SRA query string to obtain SRR run metadata
-                             (required if no --srr-file)
-        --srr-file <file>    SRR ID list file
-                             (required if no --sra-query)
-        --out-dir <dir>      Output directory
-                             (default = current dir)
-        --tmp-dir <dir>      Temporary working directory
-                             (default = current dir)
-        --num-threads <n>    Number of parallel threads
-                             (default = -1 which means all cpus)
-        --genome-dir <dir>   STAR genome index directory
-                             (default = star_grch38p2_d1_vd1_gtfv22)
-        --gtf-file <file>    Genome annotation GTF file
-                             (default = gencode.v22.annotation.gtf)
-        --star-opts <str>    Additional STAR options (quoted string)
-                             (default = none)
-        --keep <str>         Additional file types to keep (quoted string)
-                             (default = none, possible: all sra fastq bam)
-        --refresh-meta       Re-query SRA to update metadata cache
-                             (default = false)
-        --query-only         Query SRA and cache metadata then exit
-                             (default = false)
-        --use-ena-fastqs     Download ENA SRA FASTQs (with SRA fallback)
-                             (default = false)
-        --genome-shm         Use STAR genome index in shared memory
-                             (default = false)
-        --regen-all          Regenerate all result files
-                             (default = false)
-        --gen-tx-bam         Generate STAR transcriptome-aligned BAM
-                             (default = false)
-        --htseq              Run HTSeq read quantification
-                             (default = true, false use --no-htseq)
-        --htseq-par          Run HTSeq in parallel batches
-                             (default = true, false use --no-htseq-par)
-        --htseq-mode         HTSeq --mode option
-                             (default = intersection-nonempty)
-        --htseq-stranded     HTSeq --stranded option
-                             (default = no)
-        --dry-run            Show what would've been done
-                             (default = false)
-        --verbose            Be verbose
-        --help               Display usage and exit
-        --version            Display program version and exit
+        --sra-query <str>            SRA query string to obtain SRR run metadata
+                                     (required if no --srr-file or --srr-ids)
+        --srr-file <file>            SRR ID list file
+                                     (required if no --srr-query or --srr-ids)
+        --srr_ids <str>              SRR IDs (quoted string)
+                                     (required if no --srr-query or --srr-file)
+        --out-dir <dir>              Output directory
+                                     (default = current dir)
+        --tmp-dir <dir>              Temporary working directory
+                                     (default = current dir)
+        --num-threads <n>            Number of parallel threads
+                                     (default = -1 which means all cpus)
+        --genome-fasta-file <file>   STAR genome fasta file
+                                     can specify option multiple times
+                                     (default = GRCh38.d1.vd1.fa)
+        --genome-dir <dir>           STAR genome index directory
+                                     (default = star_genome_grch38p2_d1_vd1_gtfv22)
+        --gtf-file <file>            Genome annotation GTF file
+                                     (default = gencode.v22.annotation.gtf)
+        --star-genome-opts <str>     Additional STAR genome options (quoted string)
+                                     (default = none)
+        --star-opts <str>            Additional STAR mapping options (quoted string)
+                                     (default = none)
+        --max-read-len <n>           STAR maximum read length
+                                     (default = 100)
+        --keep <str>                 Additional file types to keep (quoted string)
+                                     (default = none, possible: all sra fastq bam)
+        --refresh-meta               Re-query SRA to update metadata cache
+                                     (default = false)
+        --query-only                 Query SRA and cache metadata then exit
+                                     (default = false)
+        --use-ena-fastqs             Download ENA SRA FASTQs (with SRA fallback)
+                                     (default = false)
+        --genome-shm                 Use STAR genome index in shared memory
+                                     (default = false)
+        --regen-all                  Regenerate all result files
+                                     (default = false)
+        --gen-tx-bam                 Generate STAR transcriptome-aligned BAM
+                                     (default = false)
+        --htseq                      Run HTSeq read quantification
+                                     (default = true, false use --no-htseq)
+        --htseq-par                  Run HTSeq in parallel batches
+                                     (default = true, false use --no-htseq-par)
+        --htseq-mode                 HTSeq --mode option
+                                     (default = intersection-nonempty)
+        --htseq-stranded             HTSeq --stranded option
+                                     (default = no)
+        --dry-run                    Show what would've been done
+                                     (default = false)
+        --verbose                    Be verbose
+        --help                       Display usage and exit
+        --version                    Display program version and exit
 ```
 
 The `--sra-query` can be any NCBI Entrez query string, e.g.
@@ -146,7 +155,7 @@ The `run_star_htseq.pl` wrapper script encapsulates the following steps:
 
 Then for each SRR:
 
-2.  Download SRA .sra file (via direct FTP URL, fall back to SRA toolkit prefetch) or with `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
+2.  Download SRA .sra file (via direct FTP URL, fallback to SRA toolkit prefetch) or with `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
 3.  Validate SRA vdb file (with SRA toolkit)
 4.  Dump FASTQs from vdb (with parallel-fastq-dump wrapper to fastq-dump)
 5.  Run STAR alignment and gene expression quantification

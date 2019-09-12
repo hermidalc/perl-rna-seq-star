@@ -59,12 +59,16 @@ my $procs = Unix::Processors->new();
 # options
 my $sra_query = '';
 my $srr_file = '';
+my @srr_ids = ();
 my $out_dir = File::Spec->abs2rel();
 my $tmp_dir = cwd();
 my $num_threads = -1;
-my $genome_dir = 'star_grch38p2_d1_vd1_gtfv22';
+my @genome_fasta_files = ('GRCh38.d1.vd1.fa');
+my $genome_dir = 'star_genome_grch38p2_d1_vd1_gtfv22';
 my $gtf_file = 'gencode.v22.annotation.gtf';
+my $star_genome_opts = '';
 my $star_opts = '';
+my $max_read_len = 100;
 my @keep = ();
 my $refresh_meta = 0;
 my $query_only = 0;
@@ -82,12 +86,16 @@ my $debug = 0;
 GetOptions(
     'sra-query:s' => \$sra_query,
     'srr-file:s' => \$srr_file,
+    'srr-ids:s' => \@srr_ids,
     'out-dir:s' => \$out_dir,
     'tmp-dir:s' => \$tmp_dir,
     'num-threads:i' => \$num_threads,
+    'genome-fasta-file:s' => \@genome_fasta_files,
     'genome-dir:s' => \$genome_dir,
     'gtf-file:s' => \$gtf_file,
+    'star-genome-opts:s' => \$star_genome_opts,
     'star-opts:s' => \$star_opts,
+    'max-read-len:i' => \$max_read_len,
     'keep:s' => \@keep,
     'refresh-meta' => \$refresh_meta,
     'query-only' => \$query_only,
@@ -103,48 +111,88 @@ GetOptions(
     'verbose' => \$verbose,
     'debug' => \$debug,
 ) || pod2usage(-verbose => 0);
+@srr_ids = split(' ', join(' ', @srr_ids));
+@keep = split(' ', join(' ', @keep));
+my %keep = map { $_ => 1 } @keep;
+%keep = ( all => 1 ) if $keep{all};
 if (!$sra_query) {
     if (!$srr_file) {
-        pod2usage(-message => 'Required --sra-query or --srr-file');
+        if (!@srr_ids) {
+            pod2usage(
+                -message => 'One or more of required: '.
+                    '--sra-query, --srr-file or --srr-ids'
+            );
+        }
     }
     elsif (!-f $srr_file) {
         pod2usage(-message => 'Invalid --srr-file');
     }
 }
-if ($num_threads =~ /^-?\d+$/) {
-    $num_threads = $num_threads == -1
-        ? $procs->max_physical
-        : $num_threads > 0
-            ? min($num_threads, $procs->max_physical)
-            : $num_threads < -1
-                ? max(1, $procs->max_physical + $num_threads + 1)
-                : 1;
+for my $genome_fasta_file (@genome_fasta_files) {
+    if (!-f $genome_fasta_file) {
+        pod2usage(
+            -message => "Invalid --genome-fasta-file $genome_fasta_file"
+        );
+    }
 }
-else {
-    pod2usage(-message => '--num-threads must be an integer');
+if (!-f $gtf_file) {
+    pod2usage(-message => 'Invalid --gtf-file');
 }
-if (!$dry_run) {
-    make_path($out_dir) unless -d $out_dir;
-    make_path($tmp_dir) unless -d $tmp_dir;
+if ($max_read_len < 1) {
+    pod2usage(-message => '--max-read-len must be a positive integer');
 }
-@keep = split(' ', join(' ', @keep));
-my %keep = map { $_ => 1 } @keep;
-%keep = ( all => 1 ) if $keep{all};
+$num_threads = $num_threads == -1
+    ? $procs->max_physical
+    : $num_threads > 0
+        ? min($num_threads, $procs->max_physical)
+        : $num_threads < -1
+            ? max(1, $procs->max_physical + $num_threads + 1)
+            : 1;
 print "#", '-' x 120, "#\n",
       "# STAR-HTSeq pipeline [" . scalar localtime() . "]\n\n";
-my $srr_meta;
-if (!$sra_query) {
-    print "Reading $srr_file: ";
-    open(my $fh, '<', $srr_file);
-    chomp(my @srr_ids = <$fh>);
-    close($fh);
-    @srr_ids = grep { /\S/ && /^SRR/ } @srr_ids;
-    @srr_ids = sort { $a cmp $b } uniq @srr_ids;
-    print scalar(@srr_ids), " unique SRRs\n";
-    $sra_query = join(' OR ', map { "$_\[Accession\]" } @srr_ids);
+if (!-d $genome_dir) {
+    print "Creating STAR genome index $genome_dir\n";
+    my @star_cmd = (
+        "STAR",
+        "--runThreadN $num_threads",
+        "--runMode genomeGenerate",
+        "--genomeDir '$genome_dir'",
+        "--genomeFastaFiles", join(' ',
+            map { "'$_'" } @genome_fasta_files
+        ),
+    );
+    push @star_cmd, $star_genome_opts if $star_genome_opts;
+    my $star_cmd_str = join(' ', @star_cmd);
+    print "$star_cmd_str\n" if $verbose or $debug;
+    if (!$dry_run) {
+        if (system($star_cmd_str)) {
+            exit($?) if ($? & 127) == SIGINT;
+            die +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                ": STAR failed (exit code ", $? >> 8, ")\n\n";
+        }
+    }
+    print "\n";
 }
-my $srr_meta_pls_file =
-    "$tmp_dir/".md5_hex($sra_query).".srr_meta.pls";
+if ($srr_file or @srr_ids) {
+    print "Command line: ", scalar(@srr_ids), " SRRs\n" if @srr_ids;
+    if ($srr_file) {
+        print "Reading $srr_file: ";
+        open(my $fh, '<', $srr_file);
+        my @file_srr_ids = <$fh>;
+        close($fh);
+        print scalar(@file_srr_ids), " SRRs\n";
+        push @srr_ids, @file_srr_ids;
+    }
+    @srr_ids = uniq sort { $a cmp $b }
+        grep { /\S/ && /^SRR/ }
+        map { s/\s+//gr } @srr_ids;
+    print scalar(@srr_ids), " total unique SRRs\n";
+    my @sra_query_parts = ($sra_query) if $sra_query;
+    push @sra_query_parts, map { "$_\[Accession\]" } @srr_ids;
+    $sra_query = join(' OR ', @sra_query_parts);
+}
+my $srr_meta;
+my $srr_meta_pls_file = "$tmp_dir/".md5_hex($sra_query).".srr_meta.pls";
 if (!-f $srr_meta_pls_file or $refresh_meta) {
     $sra_query =~ s/'/\'/g;
     my $sra_cmd_str = join(' | ',
@@ -183,6 +231,10 @@ if ($debug) {
 }
 print "\n";
 exit if $query_only;
+if (!$dry_run) {
+    make_path($out_dir) unless -d $out_dir;
+    make_path($tmp_dir) unless -d $tmp_dir;
+}
 my @srrs_completed = ();
 my @htseq_run_data = ();
 SRR: for my $run_idx (0 .. $#{$srr_meta}) {
@@ -441,7 +493,6 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             "--genomeLoad", $genome_shm ? "LoadAndKeep" : "NoSharedMemory",
             "--limitSjdbInsertNsj 1200000",
             "--outFileNamePrefix '$tmp_srr_dir/'",
-            "--outSAMattrRGline", join(' ', @bam_rg_fields),
             "--outFilterIntronMotifs None",
             "--outFilterMatchNminOverLread 0.33",
             "--outFilterMismatchNmax 999",
@@ -449,12 +500,15 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             "--outFilterMultimapNmax 20",
             "--outFilterScoreMinOverLread 0.33",
             "--outFilterType BySJout",
+            "--outSAMattrRGline", join(' ', @bam_rg_fields),
             "--outSAMattributes NH HI AS nM NM ch",
             "--outSAMstrandField intronMotif",
             "--outSAMtype BAM Unsorted",
             "--outSAMunmapped Within",
             "--quantMode", join(' ', @quant_modes),
             "--readFilesCommand zcat",
+            "--sjdbGTFfile '$gtf_file'",
+            "--sjdbOverhang", $max_read_len - 1,
             "--twopassMode", $genome_shm ? "None" : "Basic",
         );
         push @star_cmd, $star_opts if $star_opts;
@@ -764,48 +818,57 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
  run_star_htseq.pl [options]
 
  Options:
-    --sra-query <str>    SRA query string to obtain SRR run metadata
-                         (required if no --srr-file)
-    --srr-file <file>    SRR ID list file
-                         (required if no --sra-query)
-    --out-dir <dir>      Output directory
-                         (default = current dir)
-    --tmp-dir <dir>      Temporary working directory
-                         (default = current dir)
-    --num-threads <n>    Number of parallel threads
-                         (default = -1 which means all cpus)
-    --genome-dir <dir>   STAR genome index directory
-                         (default = star_grch38p2_d1_vd1_gtfv22)
-    --gtf-file <file>    Genome annotation GTF file
-                         (default = gencode.v22.annotation.gtf)
-    --star-opts <str>    Additional STAR options (quoted string)
-                         (default = none)
-    --keep <str>         Additional file types to keep (quoted string)
-                         (default = none, possible: all sra fastq bam)
-    --refresh-meta       Re-query SRA to update metadata cache
-                         (default = false)
-    --query-only         Query SRA and cache metadata then exit
-                         (default = false)
-    --use-ena-fastqs     Download ENA SRA FASTQs (with SRA fallback)
-                         (default = false)
-    --genome-shm         Use STAR genome index in shared memory
-                         (default = false)
-    --regen-all          Regenerate all result files
-                         (default = false)
-    --gen-tx-bam         Generate STAR transcriptome-aligned BAM
-                         (default = false)
-    --htseq              Run HTSeq read quantification
-                         (default = true, false use --no-htseq)
-    --htseq-par          Run HTSeq in parallel batches
-                         (default = true, false use --no-htseq-par)
-    --htseq-mode         HTSeq --mode option
-                         (default = intersection-nonempty)
-    --htseq-stranded     HTSeq --stranded option
-                         (default = no)
-    --dry-run            Show what would've been done
-                         (default = false)
-    --verbose            Be verbose
-    --help               Display usage and exit
-    --version            Display program version and exit
+    --sra-query <str>            SRA query string to obtain SRR run metadata
+                                 (required if no --srr-file or --srr-ids)
+    --srr-file <file>            SRR ID list file
+                                 (required if no --srr-query or --srr-ids)
+    --srr_ids <str>              SRR IDs (quoted string)
+                                 (required if no --srr-query or --srr-file)
+    --out-dir <dir>              Output directory
+                                 (default = current dir)
+    --tmp-dir <dir>              Temporary working directory
+                                 (default = current dir)
+    --num-threads <n>            Number of parallel threads
+                                 (default = -1 which means all cpus)
+    --genome-fasta-file <file>   STAR genome fasta file
+                                 can specify option multiple times
+                                 (default = GRCh38.d1.vd1.fa)
+    --genome-dir <dir>           STAR genome index directory
+                                 (default = star_genome_grch38p2_d1_vd1_gtfv22)
+    --gtf-file <file>            Genome annotation GTF file
+                                 (default = gencode.v22.annotation.gtf)
+    --star-genome-opts <str>     Additional STAR genome options (quoted string)
+                                 (default = none)
+    --star-opts <str>            Additional STAR mapping options (quoted string)
+                                 (default = none)
+    --max-read-len <n>           STAR maximum read length
+                                 (default = 100)
+    --keep <str>                 Additional file types to keep (quoted string)
+                                 (default = none, possible: all sra fastq bam)
+    --refresh-meta               Re-query SRA to update metadata cache
+                                 (default = false)
+    --query-only                 Query SRA and cache metadata then exit
+                                 (default = false)
+    --use-ena-fastqs             Download ENA SRA FASTQs (with SRA fallback)
+                                 (default = false)
+    --genome-shm                 Use STAR genome index in shared memory
+                                 (default = false)
+    --regen-all                  Regenerate all result files
+                                 (default = false)
+    --gen-tx-bam                 Generate STAR transcriptome-aligned BAM
+                                 (default = false)
+    --htseq                      Run HTSeq read quantification
+                                 (default = true, false use --no-htseq)
+    --htseq-par                  Run HTSeq in parallel batches
+                                 (default = true, false use --no-htseq-par)
+    --htseq-mode                 HTSeq --mode option
+                                 (default = intersection-nonempty)
+    --htseq-stranded             HTSeq --stranded option
+                                 (default = no)
+    --dry-run                    Show what would've been done
+                                 (default = false)
+    --verbose                    Be verbose
+    --help                       Display usage and exit
+    --version                    Display program version and exit
 
 =cut
