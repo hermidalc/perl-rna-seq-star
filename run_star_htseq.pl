@@ -42,7 +42,8 @@ select(STDOUT); $| = 1;
 
 # config
 my @states = qw(
-    TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR MV_BAM MV_TX_BAM MV_ALL HTSEQ
+    TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR
+    MV_BAM MV_TX_BAM MV_COUNTS MV_ALL HTSEQ
 );
 my $sra_ftp_run_url_prefix =
     'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra/SRR';
@@ -290,7 +291,8 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             $_ => "$out_dir/$out_file_name{$_}"
         } keys %out_file_name;
         if (!$regen_all and !-f $state_file) {
-            if (-f $out_file{'star_bam'} and
+            if (
+                -f $out_file{'star_bam'} and
                 (!$gen_tx_bam or -f $out_file{'star_tx_bam'}) and
                 -f $out_file{'star_counts'}
             ) {
@@ -360,7 +362,14 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         $state->{TMP_DIR}++;
         write_state($state_file, $state) unless $dry_run;
     }
-    elsif (!$state->{STAR} or !$state->{MV_ALL}) {
+    elsif (
+        !$state->{STAR} or
+        ($keep{all} and !$state->{MV_ALL}) or (
+            $keep{bam} and !$state->{MV_BAM} and
+            (!$gen_tx_bam or !$state->{MV_TX_BAM})
+        ) or
+        !$state->{MV_COUNTS}
+    ) {
         print "Using existing directory $tmp_srr_dir\n";
     }
     if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
@@ -588,11 +597,11 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         }
     }
     if (!$keep{all} or $keep{bam}) {
-        if (!$state->{MV_ALL}) {
+        if (!$state->{MV_COUNTS}) {
             if (move_data(
                 $tmp_file{'star_counts'}, $out_file{'star_counts'}
             )) {
-                $state->{MV_ALL}++;
+                $state->{MV_COUNTS}++;
                 write_state($state_file, $state) unless $dry_run;
             }
             else {
@@ -623,11 +632,31 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 push @htseq_run_data, {
                     'srr_id' => $srr_id,
                     'cmd_str' => $htseq_cmd_str,
+                    'tmp_srr_dir' => $tmp_srr_dir,
                     'out_file_name' => $out_file_name{'htseq_counts'},
                     'out_file' => $out_file{'htseq_counts'},
                     'state' => $state,
                     'state_file' => $state_file,
                 };
+                if (!$keep{all} and !$keep{bam}) {
+                    print "Cleaning directory $tmp_srr_dir except BAMs\n";
+                    if (!$dry_run and -d $tmp_srr_dir) {
+                        finddepth({
+                            no_chdir => 1,
+                            wanted => sub {
+                                if (-f) {
+                                    return if $_ eq $tmp_file{'star_bam'} or
+                                              $_ eq $tmp_file{'star_tx_bam'} or
+                                              $_ eq $state_file;
+                                    unlink $_;
+                                }
+                                elsif (-d and $_ ne $tmp_srr_dir) {
+                                    remove_tree($_, { safe => 1 });
+                                }
+                            },
+                        }, $tmp_srr_dir);
+                    }
+                }
                 if (
                     scalar(@htseq_run_data) % $htseq_par_n == 0 or
                     $run_idx == $#{$srr_meta}
@@ -641,7 +670,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     HTSEQ: for my $htseq_run (@htseq_run_data) {
                         $pm->start($htseq_run->{'srr_id'}) and next HTSEQ;
                         print "[$htseq_run->{'srr_id'}] ",
-                              "Starting htseq-count\n";
+                              "Running htseq-count\n";
                         print "[$htseq_run->{'srr_id'}] ",
                               "$htseq_run->{'cmd_str'}\n"
                               if $verbose or $debug;
@@ -653,13 +682,15 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         }
                         if ($exit_code) {
                             if (($exit_code & 127) == SIGINT) {
-                                warn "htseq-count interrupted\n";
+                                warn "[$htseq_run->{'srr_id'}] ",
+                                     "htseq-count interrupted\n";
                             }
                             else {
-                                warn +(-t STDERR
-                                    ? colored('ERROR', 'red') :'ERROR'
-                                ), ": htseq-count failed (exit code ",
-                                    $exit_code >> 8, ")\n";
+                                warn "[$htseq_run->{'srr_id'}] ",
+                                     +(-t STDERR
+                                         ? colored('ERROR', 'red') : 'ERROR'
+                                     ), ": htseq-count failed (exit code ",
+                                     $exit_code >> 8, ")\n";
                             }
                         }
                         else {
@@ -676,6 +707,20 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                                     $htseq_run->{'state_file'},
                                     $htseq_run->{'state'},
                                 );
+                            }
+                            if (!$keep{all}) {
+                                print "[$htseq_run->{'srr_id'}] ",
+                                      "Removing directory ",
+                                      "$htseq_run->{'tmp_srr_dir'}\n";
+                                if (
+                                    !$dry_run and
+                                    -d $htseq_run->{'tmp_srr_dir'}
+                                ) {
+                                    remove_tree (
+                                        $htseq_run->{'tmp_srr_dir'},
+                                        { safe => 1 }
+                                    );
+                                }
                             }
                         }
                         $pm->finish($exit_code);
@@ -698,7 +743,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 if ($exit_code) {
                     exit($exit_code) if ($exit_code & 127) == SIGINT;
                     warn +(-t STDERR
-                        ? colored('ERROR', 'red') :'ERROR'
+                        ? colored('ERROR', 'red') : 'ERROR'
                     ), ": htseq-count failed (exit code ",
                         $exit_code >> 8, ")\n";
                     next SRR;
@@ -721,29 +766,11 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     }
     if (!$htseq or $state->{HTSEQ} or !$htseq_par) {
         push @srrs_completed, $srr_id;
-    }
-    if (!$dry_run and !$keep{all} and -d $tmp_srr_dir) {
-        if (
-            $htseq and $htseq_par and !$keep{bam} and
-            $run_idx != $#{$srr_meta}
-        ) {
-            finddepth({
-                no_chdir => 1,
-                wanted => sub {
-                    if (-f) {
-                        return if $_ eq $tmp_file{'star_bam'} or
-                                  $_ eq $tmp_file{'star_tx_bam'} or
-                                  $_ eq $state_file;
-                        unlink $_;
-                    }
-                    elsif (-d and $_ ne $tmp_srr_dir) {
-                        remove_tree($_, { safe => 1 });
-                    }
-                },
-            }, $tmp_srr_dir);
-        }
-        else {
-            remove_tree($tmp_srr_dir, { safe => 1 });
+        if (!$keep{all}) {
+            print "Removing directory $tmp_srr_dir\n";
+            if (!$dry_run and -d $tmp_srr_dir) {
+                remove_tree($tmp_srr_dir, { safe => 1 });
+            }
         }
     }
     print "\n";
