@@ -78,6 +78,7 @@ my $regen_all = 0;
 my $gen_tx_bam = 0;
 my $htseq = 1;
 my $htseq_par = 1;
+my $htseq_par_n = -1;
 my $htseq_mode = 'intersection-nonempty';
 my $htseq_stranded = 'no';
 my $dry_run = 0;
@@ -105,6 +106,7 @@ GetOptions(
     'gen-tx-bam' => \$gen_tx_bam,
     'htseq!' => \$htseq,
     'htseq-par!' => \$htseq_par,
+    'htseq-par-n:i' => \$htseq_par_n,
     'htseq-mode:s' => \$htseq_mode,
     'htseq-stranded:s' => \$htseq_stranded,
     'dry-run' => \$dry_run,
@@ -147,6 +149,13 @@ $num_threads = $num_threads == -1
         ? min($num_threads, $procs->max_physical)
         : $num_threads < -1
             ? max(1, $procs->max_physical + $num_threads + 1)
+            : 1;
+$htseq_par_n = $htseq_par_n == -1
+    ? $num_threads
+    : $htseq_par_n > 0
+        ? $htseq_par_n
+        : $htseq_par_n < -1
+            ? max(1, $num_threads + $htseq_par_n + 1)
             : 1;
 print "#", '-' x 120, "#\n",
       "# STAR-HTSeq pipeline [" . scalar localtime() . "]\n\n";
@@ -620,11 +629,11 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     'state_file' => $state_file,
                 };
                 if (
-                    scalar(@htseq_run_data) % $num_threads == 0 or
+                    scalar(@htseq_run_data) % $htseq_par_n == 0 or
                     $run_idx == $#{$srr_meta}
                 ) {
                     print "\nRunning HTSeq quantification\n";
-                    my $pm = Parallel::ForkManager->new($num_threads);
+                    my $pm = Parallel::ForkManager->new($htseq_par_n);
                     $pm->run_on_finish(sub {
                         my ($pid, $exit_code, $srr_id) = @_;
                         push @srrs_completed, $srr_id unless $exit_code;
@@ -834,7 +843,7 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
     --tmp-dir <dir>              Temporary working directory
                                  (default = current dir)
     --num-threads <n>            Number of parallel threads
-                                 (default = -1 which means all cpus)
+                                 (default = -1, num cpus)
     --genome-fasta-file <file>   STAR genome fasta file
                                  can specify option multiple times
                                  (default = GRCh38.d1.vd1.fa)
@@ -864,8 +873,10 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
                                  (default = false)
     --htseq                      Run HTSeq read quantification
                                  (default = true, false use --no-htseq)
-    --htseq-par                  Run HTSeq in parallel batches
+    --htseq-par                  Run HTSeq jobs in parallel batches
                                  (default = true, false use --no-htseq-par)
+    --htseq-par-n <n>            Number of HTSeq jobs in a batch
+                                 (default = -1, num cpus)
     --htseq-mode                 HTSeq --mode option
                                  (default = intersection-nonempty)
     --htseq-stranded             HTSeq --stranded option
