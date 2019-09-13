@@ -703,7 +703,6 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     }
                     $state->{HTSEQ}++;
                     write_state($state_file, $state) unless $dry_run;
-                    push @srrs_completed, $srr_id;
                 }
             }
         }
@@ -711,7 +710,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             print "Completed $out_file_name{'htseq_counts'} exists\n";
         }
     }
-    else {
+    if (!$htseq or $state->{HTSEQ} or !$htseq_par) {
         push @srrs_completed, $srr_id;
     }
     if (!$dry_run and !$keep{all} and -d $tmp_srr_dir) {
