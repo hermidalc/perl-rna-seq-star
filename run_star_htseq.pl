@@ -298,10 +298,11 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             ) {
                 $init_state = {
                     map { $_ => 1 } grep {
+                        $_ ne 'TMP_DIR' &&
                         ($use_ena_fastqs
                             ? $_ !~ /^SRA(_FASTQ)?$/
-                            : $_ ne 'ENA_FASTQ')
-                        && $_ ne 'HTSEQ'
+                            : $_ ne 'ENA_FASTQ') &&
+                        $_ ne 'HTSEQ'
                     } @states
                 };
                 if ($htseq and -f $out_file{'htseq_counts'}) {
@@ -330,6 +331,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 ) {
                     $init_state = {
                         map { $_ => 1 } grep {
+                            $_ ne 'TMP_DIR' &&
                             ($use_ena_fastqs
                                 ? $_ !~ /^SRA(_FASTQ)?$/
                                 : $_ ne 'ENA_FASTQ')
@@ -340,156 +342,151 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             elsif (-f $out_file{'star_counts'}) {
                 $init_state = {
                     map { $_ => 1 } grep {
+                        $_ ne 'TMP_DIR' &&
                         ($use_ena_fastqs
                             ? $_ !~ /^SRA(_FASTQ)?$/
-                            : $_ ne 'ENA_FASTQ')
-                        && $_ ne 'HTSEQ'
+                            : $_ ne 'ENA_FASTQ') &&
+                        $_ ne 'HTSEQ'
                     } @states
                 };
             }
         }
     }
     my $state = { %{$init_state} };
-    if (!$state->{TMP_DIR}) {
-        if (-d $tmp_srr_dir) {
-            print "Cleaning directory $tmp_srr_dir\n";
-            remove_tree($tmp_srr_dir, { safe => 1 }) unless $dry_run;
+    if (!$state->{STAR}) {
+        if (!$state->{TMP_DIR}) {
+            if (-d $tmp_srr_dir) {
+                print "Cleaning directory $tmp_srr_dir\n";
+                remove_tree($tmp_srr_dir, { safe => 1 }) unless $dry_run;
+            }
+            else {
+                print "Creating directory $tmp_srr_dir\n";
+                make_path($tmp_srr_dir) unless $dry_run;
+            }
+            $state->{TMP_DIR}++;
+            write_state($state_file, $state) unless $dry_run;
         }
         else {
-            print "Creating directory $tmp_srr_dir\n";
-            make_path($tmp_srr_dir) unless $dry_run;
+            print "Using existing directory $tmp_srr_dir\n";
         }
-        $state->{TMP_DIR}++;
-        write_state($state_file, $state) unless $dry_run;
-    }
-    elsif (
-        !$state->{STAR} or
-        ($keep{all} and !$state->{MV_ALL}) or (
-            $keep{bam} and !$state->{MV_BAM} and
-            (!$gen_tx_bam or !$state->{MV_TX_BAM})
-        ) or
-        !$state->{MV_COUNTS}
-    ) {
-        print "Using existing directory $tmp_srr_dir\n";
-    }
-    if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
+        if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
+            if (!$state->{ENA_FASTQ}) {
+                my $fastqs_downloaded = 0;
+                for my $n (1..2) {
+                    print "Downloading $tmp_file_name{\"fastq$n\"}";
+                    if (download_url(
+                        join('/',
+                            $ena_ftp_fastq_url_prefix,
+                            substr($srr_id, 0, 6),
+                            '00'.substr($srr_id, -1),
+                            $srr_id,
+                            $tmp_file_name{"fastq$n"},
+                        ),
+                        $tmp_srr_dir,
+                    )) {
+                        if (++$fastqs_downloaded == 2) {
+                            $state->{ENA_FASTQ}++;
+                            write_state($state_file, $state) unless $dry_run;
+                        }
+                    }
+                    else {
+                        print "Removing $tmp_file_name{\"fastq$n\"}\n";
+                        unlink $tmp_file{"fastq$n"};
+                    }
+                }
+            }
+            else {
+                print "Using existing ",
+                      join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
+            }
+        }
         if (!$state->{ENA_FASTQ}) {
-            my $fastqs_downloaded = 0;
-            for my $n (1..2) {
-                print "Downloading $tmp_file_name{\"fastq$n\"}";
-                if (download_url(
+            if (!$state->{SRA}) {
+                print "Downloading $tmp_file_name{'sra'}";
+                if (!download_url(
                     join('/',
-                        $ena_ftp_fastq_url_prefix,
+                        $sra_ftp_run_url_prefix,
                         substr($srr_id, 0, 6),
-                        '00'.substr($srr_id, -1),
                         $srr_id,
-                        $tmp_file_name{"fastq$n"},
+                        "$tmp_file_name{'sra'}",
                     ),
                     $tmp_srr_dir,
                 )) {
-                    if (++$fastqs_downloaded == 2) {
-                        $state->{ENA_FASTQ}++;
-                        write_state($state_file, $state) unless $dry_run;
+                    print "Removing $tmp_file_name{'sra'}";
+                    unlink $tmp_file{'sra'};
+                    my $dl_cmd_str =
+                        "prefetch $srr_id -o '$tmp_file{'sra'}'";
+                    print "\n$dl_cmd_str" if $verbose or $debug;
+                    if (!$dry_run) {
+                        if (system($dl_cmd_str)) {
+                            exit($?) if ($? & 127) == SIGINT;
+                            warn +(
+                                -t STDERR ? colored('ERROR', 'red') : 'ERROR'
+                            ), ": download failed (exit code ", $? >> 8,
+                            ")\n\n";
+                            next SRR;
+                        }
+                    }
+                    else {
+                        print "\n";
                     }
                 }
-                else {
-                    print "Removing $tmp_file_name{\"fastq$n\"}\n";
-                    unlink $tmp_file{"fastq$n"};
-                }
-            }
-        }
-        elsif (!$state->{STAR}) {
-            print "Using existing ",
-                  join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
-        }
-    }
-    if (!$state->{ENA_FASTQ}) {
-        if (!$state->{SRA}) {
-            print "Downloading $tmp_file_name{'sra'}";
-            if (!download_url(
-                join('/',
-                    $sra_ftp_run_url_prefix,
-                    substr($srr_id, 0, 6),
-                    $srr_id,
-                    "$tmp_file_name{'sra'}",
-                ),
-                $tmp_srr_dir,
-            )) {
-                print "Removing $tmp_file_name{'sra'}";
-                unlink $tmp_file{'sra'};
-                my $dl_cmd_str =
-                    "prefetch $srr_id -o '$tmp_file{'sra'}'";
-                print "\n$dl_cmd_str" if $verbose or $debug;
+                my $val_cmd_str = join(' ',
+                    "vdb-validate",
+                    "-x", "-B yes", "-I yes", "-C yes",
+                    "'$tmp_file{'sra'}'",
+                );
+                print "Validating $tmp_file_name{'sra'}\n";
+                print "$val_cmd_str\n" if $verbose or $debug;
                 if (!$dry_run) {
-                    if (system($dl_cmd_str)) {
+                    if (system($val_cmd_str)) {
                         exit($?) if ($? & 127) == SIGINT;
-                        warn +(
-                            -t STDERR ? colored('ERROR', 'red') : 'ERROR'
-                        ), ": download failed (exit code ", $? >> 8, ")\n\n";
+                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                            ": vdb-validate failed (exit code ", $? >> 8,
+                            ")\n\n";
                         next SRR;
                     }
                 }
-                else {
-                    print "\n";
-                }
+                $state->{SRA}++;
+                write_state($state_file, $state) unless $dry_run;
             }
-            my $val_cmd_str = join(' ',
-                "vdb-validate",
-                "-x", "-B yes", "-I yes", "-C yes",
-                "'$tmp_file{'sra'}'",
-            );
-            print "Validating $tmp_file_name{'sra'}\n";
-            print "$val_cmd_str\n" if $verbose or $debug;
-            if (!$dry_run) {
-                if (system($val_cmd_str)) {
-                    exit($?) if ($? & 127) == SIGINT;
-                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                        ": vdb-validate failed (exit code ", $? >> 8,
-                        ")\n\n";
-                    next SRR;
-                }
+            elsif (!$state->{SRA_FASTQ}) {
+                print "Using existing $tmp_file_name{'sra'}\n";
             }
-            $state->{SRA}++;
-            write_state($state_file, $state) unless $dry_run;
-        }
-        elsif (!$state->{SRA_FASTQ}) {
-            print "Using existing $tmp_file_name{'sra'}\n";
-        }
-        if (!$state->{SRA_FASTQ}) {
-            my $pfq_cmd_str = join(' ',
-                "parallel-fastq-dump",
-                "--threads $num_threads",
-                "--sra-id '$tmp_file{'sra'}'",
-                "--outdir '$tmp_srr_dir'",
-                "--tmpdir '$tmp_srr_dir'",
-                "--gzip",
-                "--skip-technical",
-                "--readids",
-                "--read-filter pass",
-                "--dumpbase",
-                "--split-3",
-                "--clip",
-            );
-            print "Generating $tmp_file_name{'sra'} FASTQs\n";
-            print "$pfq_cmd_str\n" if $verbose or $debug;
-            if (!$dry_run) {
-                if (system($pfq_cmd_str)) {
-                    exit($?) if ($? & 127) == SIGINT;
-                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                        ": parallel-fastq-dump failed (exit code ",
-                        $? >> 8, ")\n\n";
-                    next SRR;
+            if (!$state->{SRA_FASTQ}) {
+                my $pfq_cmd_str = join(' ',
+                    "parallel-fastq-dump",
+                    "--threads $num_threads",
+                    "--sra-id '$tmp_file{'sra'}'",
+                    "--outdir '$tmp_srr_dir'",
+                    "--tmpdir '$tmp_srr_dir'",
+                    "--gzip",
+                    "--skip-technical",
+                    "--readids",
+                    "--read-filter pass",
+                    "--dumpbase",
+                    "--split-3",
+                    "--clip",
+                );
+                print "Generating $tmp_file_name{'sra'} FASTQs\n";
+                print "$pfq_cmd_str\n" if $verbose or $debug;
+                if (!$dry_run) {
+                    if (system($pfq_cmd_str)) {
+                        exit($?) if ($? & 127) == SIGINT;
+                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                            ": parallel-fastq-dump failed (exit code ",
+                            $? >> 8, ")\n\n";
+                        next SRR;
+                    }
                 }
+                $state->{SRA_FASTQ}++;
+                write_state($state_file, $state) unless $dry_run;
             }
-            $state->{SRA_FASTQ}++;
-            write_state($state_file, $state) unless $dry_run;
+            else {
+                print "Using existing ",
+                      join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
+            }
         }
-        elsif (!$state->{STAR}) {
-            print "Using existing ",
-                  join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
-        }
-    }
-    if (!$state->{STAR}) {
         my @bam_rg_fields = map {
             "\"$_->{'RG'}:$srr_meta->[$run_idx]->{$_->{'SRA'}}\""
         } grep {
@@ -553,6 +550,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     if ($keep{all}) {
         if (!$state->{MV_ALL}) {
             if ($out_srr_dir ne $tmp_srr_dir) {
+                if ($init_state->{TMP_DIR}) {
+                    print "Using existing directory $tmp_srr_dir\n";
+                }
                 if (move_data($tmp_srr_dir, $out_srr_dir)) {
                     $state->{MV_ALL}++;
                     write_state($state_file, $state) unless $dry_run;
@@ -561,6 +561,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     next SRR;
                 }
             }
+            elsif ($init_state->{STAR}) {
+                print "Completed $out_srr_dir directory exists\n";
+            }
         }
         else {
             print "Completed $out_srr_dir directory exists\n";
@@ -568,6 +571,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     }
     elsif ($keep{bam}) {
         if (!$state->{MV_BAM}) {
+            if ($init_state->{TMP_DIR}) {
+                print "Using existing directory $tmp_srr_dir\n";
+            }
             if (move_data($tmp_file{'star_bam'}, $out_file{'star_bam'})) {
                 $state->{MV_BAM}++;
                 write_state($state_file, $state) unless $dry_run;
@@ -598,6 +604,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     }
     if (!$keep{all} or $keep{bam}) {
         if (!$state->{MV_COUNTS}) {
+            if (!$keep{bam} and $init_state->{TMP_DIR}) {
+                print "Using existing directory $tmp_srr_dir\n";
+            }
             if (move_data(
                 $tmp_file{'star_counts'}, $out_file{'star_counts'}
             )) {
@@ -639,7 +648,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     'state_file' => $state_file,
                 };
                 if (!$keep{all} and !$keep{bam}) {
-                    print "Cleaning directory $tmp_srr_dir except BAMs\n";
+                    if ($state->{TMP_DIR}) {
+                        print "Cleaning directory $tmp_srr_dir except BAMs\n";
+                    }
                     if (!$dry_run and -d $tmp_srr_dir) {
                         finddepth({
                             no_chdir => 1,
@@ -709,14 +720,16 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                                 );
                             }
                             if (!$keep{all}) {
-                                print "[$htseq_run->{'srr_id'}] ",
-                                      "Removing directory ",
-                                      "$htseq_run->{'tmp_srr_dir'}\n";
+                                if ($htseq_run->{'state'}->{TMP_DIR}) {
+                                    print "[$htseq_run->{'srr_id'}] ",
+                                          "Removing directory ",
+                                          "$htseq_run->{'tmp_srr_dir'}\n";
+                                }
                                 if (
                                     !$dry_run and
                                     -d $htseq_run->{'tmp_srr_dir'}
                                 ) {
-                                    remove_tree (
+                                    remove_tree(
                                         $htseq_run->{'tmp_srr_dir'},
                                         { safe => 1 }
                                     );
@@ -730,8 +743,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 }
             }
             else {
-                print "Using existing $out_file_name{'star_bam'}\n"
-                    if $init_state->{STAR};
+                if ($init_state->{STAR}) {
+                    print "Using existing $out_file_name{'star_bam'}\n";
+                }
                 print "Running HTSeq quantification\n";
                 print "$htseq_cmd_str\n" if $verbose or $debug;
                 my $htseq_counts;
@@ -767,7 +781,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     if (!$htseq or $state->{HTSEQ} or !$htseq_par) {
         push @srrs_completed, $srr_id;
         if (!$keep{all}) {
-            print "Removing directory $tmp_srr_dir\n";
+            if ($state->{TMP_DIR}) {
+                print "Removing directory $tmp_srr_dir\n";
+            }
             if (!$dry_run and -d $tmp_srr_dir) {
                 remove_tree($tmp_srr_dir, { safe => 1 });
             }
