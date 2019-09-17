@@ -7,8 +7,6 @@ dependencies:
   - entrez-direct
   - htseq
   - parallel-fastq-dump
-  - perl-config-tiny
-  - perl-ipc-system-simple
   - perl-parallel-forkmanager
   - perl-text-csv
   - perl-unix-processors
