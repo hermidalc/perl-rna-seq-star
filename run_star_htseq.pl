@@ -15,6 +15,7 @@ use File::Spec;
 use Getopt::Long qw(:config auto_help auto_version);
 use IPC::Cmd qw(can_run);
 use List::Util qw(max min notall uniq);
+use LWP::UserAgent;
 use Parallel::ForkManager;
 use Pod::Usage qw(pod2usage);
 use POSIX qw(SIGINT);
@@ -22,7 +23,6 @@ use Storable qw(lock_nstore lock_retrieve);
 use Term::ANSIColor;
 use Text::CSV qw(csv);
 use Unix::Processors;
-use URI;
 use Data::Dumper;
 
 sub sig_handler {
@@ -158,6 +158,7 @@ $htseq_par_n = $htseq_par_n == -1
         : $htseq_par_n < -1
             ? max(1, $num_threads + $htseq_par_n + 1)
             : 1;
+my $ua = LWP::UserAgent->new();
 print "#", '-' x 120, "#\n",
       "# STAR-HTSeq pipeline [" . scalar localtime() . "]\n\n";
 if (!-d $genome_dir) {
@@ -373,23 +374,23 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             if (!$state->{ENA_FASTQ}) {
                 my $fastqs_downloaded = 0;
                 for my $n (1..2) {
-                    print "Downloading $tmp_file_name{\"fastq$n\"}";
+                    print "Downloading $tmp_file_name{\"fastq$n\"}\n";
                     if (download_url(
                         join('/',
                             $ena_ftp_fastq_url_prefix,
                             substr($srr_id, 0, 6),
                             '00'.substr($srr_id, -1),
                             $srr_id,
-                            $tmp_file_name{"fastq$n"},
                         ),
                         $tmp_srr_dir,
+                        $tmp_file_name{"fastq$n"},
                     )) {
                         if (++$fastqs_downloaded == 2) {
                             $state->{ENA_FASTQ}++;
                             write_state($state_file, $state) unless $dry_run;
                         }
                     }
-                    else {
+                    elsif (-f $tmp_file{"fastq$n"})  {
                         print "Removing $tmp_file_name{\"fastq$n\"}\n";
                         unlink $tmp_file{"fastq$n"};
                     }
@@ -402,18 +403,21 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         }
         if (!$state->{ENA_FASTQ}) {
             if (!$state->{SRA}) {
-                print "Downloading $tmp_file_name{'sra'}";
+                print "Downloading $tmp_file_name{'sra'}\n";
                 if (!download_url(
                     join('/',
                         $sra_ftp_run_url_prefix,
                         substr($srr_id, 0, 6),
                         $srr_id,
-                        "$tmp_file_name{'sra'}",
                     ),
                     $tmp_srr_dir,
+                    $tmp_file_name{'sra'},
                 )) {
-                    print "Removing $tmp_file_name{'sra'}";
-                    unlink $tmp_file{'sra'};
+                    if (-f $tmp_file{'sra'}) {
+                        print "Removing $tmp_file_name{'sra'}\n";
+                        unlink $tmp_file{'sra'};
+                    }
+                    print 'Using SRA Toolkit prefetch';
                     my $dl_cmd_str =
                         "prefetch $srr_id -o '$tmp_file{'sra'}'";
                     print "\n$dl_cmd_str" if $verbose or $debug;
@@ -811,42 +815,48 @@ sub write_state {
 }
 
 sub download_url {
-    my ($url, $dir) = @_;
-    my $dl_cmd_str;
-    my $name = (URI->new($url)->path_segments)[-1];
-    if (my $wget = can_run('wget')) {
-        $dl_cmd_str = "$wget -O '$dir/$name' '$url'";
-    }
-    elsif (my $curl = can_run('curl')) {
-        $dl_cmd_str =
-            "$curl -o '$dir/$name' -L '$url'";
-    }
-    print "\n";
-    if ($dl_cmd_str) {
-        print "$dl_cmd_str\n" if $verbose or $debug;
-        if (!$dry_run) {
-            if (system($dl_cmd_str)) {
-                exit($?) if ($? & 127) == SIGINT;
-                warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                    ": download failed (exit code ", $? >> 8, ")\n";
-                return 0;
+    my ($base_url, $dir, $name) = @_;
+    my $url = "$base_url/$name";
+    print 'Checking SRA FTP: ';
+    if ($ua->head($base_url)->is_success) {
+        print "OK\n";
+        my $dl_cmd_str;
+        if (my $wget = can_run('wget')) {
+            $dl_cmd_str = "$wget -O '$dir/$name' '$url'";
+        }
+        elsif (my $curl = can_run('curl')) {
+            $dl_cmd_str = "$curl -o '$dir/$name' -L '$url'";
+        }
+        if ($dl_cmd_str) {
+            print "$dl_cmd_str\n" if $verbose or $debug;
+            if (!$dry_run) {
+                if (system($dl_cmd_str)) {
+                    exit($?) if ($? & 127) == SIGINT;
+                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                        ": download failed (exit code ", $? >> 8, ")\n";
+                    return 0;
+                }
             }
         }
+        else {
+            print "Using File::Fetch...\n";
+            my $ff = File::Fetch->new(uri => $url);
+            if (!$dry_run) {
+                if (!$ff->fetch(to => $dir)) {
+                    exit($?) if ($? & 127) == SIGINT;
+                    warn +(
+                        -t STDERR ? colored('ERROR', 'red') : 'ERROR'
+                    ), ": fetch failed, ", $ff->error, "\n";
+                    return 0;
+                }
+            }
+        }
+        return 1;
     }
     else {
-        print "Using File::Fetch...\n";
-        my $ff = File::Fetch->new(uri => $url);
-        if (!$dry_run) {
-            if (!$ff->fetch(to => $dir)) {
-                exit($?) if ($? & 127) == SIGINT;
-                warn +(
-                    -t STDERR ? colored('ERROR', 'red') : 'ERROR'
-                ), ": fetch failed, ", $ff->error, "\n";
-                return 0;
-            }
-        }
+        print "$url doesn't exist\n";
+        return 0;
     }
-    return 1;
 }
 
 sub move_data {
