@@ -42,7 +42,7 @@ select(STDOUT); $| = 1;
 
 # config
 my @states = qw(
-    TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR
+    TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR_PASS1 STAR_PASS2
     MV_BAM MV_TX_BAM MV_COUNTS MV_ALL HTSEQ
 );
 my $sra_ftp_run_url_prefix =
@@ -69,7 +69,8 @@ my $genome_dir = 'star_genome_grch38p2_d1_vd1_gtfv22';
 my $gtf_file = 'gencode.v22.annotation.gtf';
 my $star_genome_opts = '';
 my $star_opts = '';
-my $max_read_len = 100;
+my $star_max_readlen = 100;
+my $star_filter_sj_pass1 = 0;
 my @keep = ();
 my $refresh_meta = 0;
 my $query_only = 0;
@@ -97,7 +98,8 @@ GetOptions(
     'gtf-file:s' => \$gtf_file,
     'star-genome-opts:s' => \$star_genome_opts,
     'star-opts:s' => \$star_opts,
-    'max-read-len:i' => \$max_read_len,
+    'star-max-readlen:i' => \$star_max_readlen,
+    'star-filter-sj-pass1' => \$star_filter_sj_pass1,
     'keep:s' => \@keep,
     'refresh-meta' => \$refresh_meta,
     'query-only' => \$query_only,
@@ -141,8 +143,8 @@ for my $genome_fasta_file (@genome_fasta_files) {
 if (!-f $gtf_file) {
     pod2usage(-message => 'Invalid --gtf-file');
 }
-if ($max_read_len < 1) {
-    pod2usage(-message => '--max-read-len must be a positive integer');
+if ($star_max_readlen < 1) {
+    pod2usage(-message => '--star-max-readlen must be a positive integer');
 }
 $num_threads = $num_threads == -1
     ? $procs->max_physical
@@ -354,7 +356,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         }
     }
     my $state = { %{$init_state} };
-    if (!$state->{STAR}) {
+    if (!$state->{STAR_PASS2}) {
         if (!$state->{TMP_DIR}) {
             if (-d $tmp_srr_dir) {
                 print "Cleaning directory $tmp_srr_dir\n";
@@ -491,6 +493,12 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                       join(' ', @tmp_file_name{'fastq1', 'fastq2'}), "\n";
             }
         }
+        my $pass1_dir_name = '_STARpass1';
+        my $pass1_dir = "$tmp_srr_dir/$pass1_dir_name";
+        my $pass1_sj_file_name = 'SJ.out.tab';
+        my $pass1_sj_file = "$pass1_dir/$pass1_sj_file_name";
+        my $pass1_sj_filter_file_name = 'SJ.filtered.out.tab';
+        my $pass1_sj_filter_file = "$pass1_dir/$pass1_sj_filter_file_name";
         my @bam_rg_fields = map {
             "\"$_->{'RG'}:$srr_meta->[$run_idx]->{$_->{'SRA'}}\""
         } grep {
@@ -498,6 +506,82 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         } @bam_rg2sra_fields;
         my @quant_modes = ('GeneCounts');
         push @quant_modes, 'TranscriptomeSAM' if $gen_tx_bam;
+        if ($star_filter_sj_pass1) {
+            if (!$state->{STAR_PASS1}) {
+                my @star_cmd = (
+                    "STAR",
+                    "--runThreadN $num_threads",
+                    "--readFilesIn", join(' ',
+                        map { "'$_'" } @tmp_file{'fastq1', 'fastq2'}
+                    ),
+                    "--alignIntronMax 1000000",
+                    "--alignIntronMin 20",
+                    "--alignMatesGapMax 1000000",
+                    "--alignSJDBoverhangMin 1",
+                    "--alignSJoverhangMin 8",
+                    "--alignSoftClipAtReferenceEnds Yes",
+                    "--genomeDir '$genome_dir'",
+                    "--genomeLoad", $genome_shm
+                        ? "LoadAndKeep" : "NoSharedMemory",
+                    "--limitSjdbInsertNsj 1200000",
+                    "--outFileNamePrefix '$pass1_dir/'",
+                    "--outFilterIntronMotifs None",
+                    "--outFilterMatchNminOverLread 0.33",
+                    "--outFilterMismatchNmax 999",
+                    "--outFilterMismatchNoverLmax 0.1",
+                    "--outFilterMultimapNmax 20",
+                    "--outFilterScoreMinOverLread 0.33",
+                    "--outSAMtype None",
+                    "--readFilesCommand zcat",
+                    "--sjdbGTFfile '$gtf_file'",
+                    "--sjdbOverhang", $star_max_readlen - 1,
+                );
+                my $star_cmd_str = join(' ', @star_cmd);
+                print "Running STAR alignment pass 1\n";
+                print "$star_cmd_str\n" if $verbose or $debug;
+                if (!$dry_run) {
+                    mkdir $pass1_dir, 0755;
+                    if (system($star_cmd_str)) {
+                        exit($?) if ($? & 127) == SIGINT;
+                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                            ": STAR failed (exit code ", $? >> 8, ")\n\n";
+                        next SRR;
+                    }
+                }
+                print "Filtering $pass1_sj_file_name: ";
+                my $num_novel_sj = 0;
+                my $num_filter_novel_sj = 0;
+                open(my $in_fh, '<', $pass1_sj_file);
+                open(my $out_fh, '>', $pass1_sj_filter_file);
+                while (<$in_fh>) {
+                    chomp;
+                    my @fields = split /\s+/;
+                    # skip annotated
+                    next unless $fields[5] == 0;
+                    if (
+                        # chromosomal and non-mitochondrial
+                        $fields[0] =~ /chr([1-9][0-9]?|X|Y)/ and
+                        # canonical
+                        $fields[4] > 0 and
+                        # supported by a unique mapper
+                        $fields[6] > 0
+                    ) {
+                        print $out_fh "$_\n";
+                        $num_filter_novel_sj++;
+                    }
+                    $num_novel_sj++;
+                }
+                close($in_fh);
+                close($out_fh);
+                print "$num_filter_novel_sj / $num_novel_sj",
+                      " novel junctions kept\n";
+                $state->{STAR_PASS1}++;
+                write_state($state_file, $state) unless $dry_run;
+            }
+            else {
+                print "Using existing $pass1_sj_filter_file_name\n";
+            }
+        }
         my @star_cmd = (
             "STAR",
             "--runThreadN $num_threads",
@@ -533,12 +617,15 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             "--quantMode", join(' ', @quant_modes),
             "--readFilesCommand zcat",
             "--sjdbGTFfile '$gtf_file'",
-            "--sjdbOverhang", $max_read_len - 1,
-            "--twopassMode", $genome_shm ? "None" : "Basic",
+            "--sjdbOverhang", $star_max_readlen - 1,
         );
+        push @star_cmd, $star_filter_sj_pass1
+            ? "--sjdbFileChrStartEnd '$pass1_sj_filter_file'"
+            : ("--twopassMode", $genome_shm ? "None" : "Basic");
         push @star_cmd, $star_opts if $star_opts;
         my $star_cmd_str = join(' ', @star_cmd);
-        print "Running STAR alignment\n";
+        print "Running STAR alignment",
+            $star_filter_sj_pass1 ? " pass 2\n" : "\n";
         print "$star_cmd_str\n" if $verbose or $debug;
         if (!$dry_run) {
             if (system($star_cmd_str)) {
@@ -548,7 +635,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 next SRR;
             }
         }
-        $state->{STAR}++;
+        $state->{STAR_PASS2}++;
         write_state($state_file, $state) unless $dry_run;
     }
     if ($keep{all}) {
@@ -565,7 +652,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     next SRR;
                 }
             }
-            elsif ($init_state->{STAR}) {
+            elsif ($init_state->{STAR_PASS2}) {
                 print "Completed $out_srr_dir directory exists\n";
             }
         }
@@ -747,7 +834,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 }
             }
             else {
-                if ($init_state->{STAR}) {
+                if ($init_state->{STAR_PASS2}) {
                     print "Using existing $out_file_name{'star_bam'}\n";
                 }
                 print "Running HTSeq quantification\n";
@@ -908,8 +995,12 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
                                  (default = none)
     --star-opts <str>            Additional STAR mapping options (quoted string)
                                  (default = none)
-    --max-read-len <n>           STAR maximum read length
+    --star-max-readlen <n>       STAR maximum read length
                                  (default = 100)
+    --star-filter-sj-pass1       Filter STAR 1st pass novel splice junctions
+                                 for chromosomal (non-mito), canonical, and
+                                 unique mapper supported splice junctions
+                                 (default = false)
     --keep <str>                 Additional file types to keep (quoted string)
                                  (default = none, possible: all sra fastq bam)
     --refresh-meta               Re-query SRA to update metadata cache

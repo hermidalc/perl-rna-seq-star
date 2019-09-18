@@ -110,8 +110,12 @@ Usage:
                                      (default = none)
         --star-opts <str>            Additional STAR mapping options (quoted string)
                                      (default = none)
-        --max-read-len <n>           STAR maximum read length
+        --star-max-readlen <n>       STAR maximum read length
                                      (default = 100)
+        --star-filter-sj-pass1       Filter STAR 1st pass novel splice junctions
+                                     for chromosomal (non-mito), canonical, and
+                                     unique mapper supported splice junctions
+                                     (default = false)
         --keep <str>                 Additional file types to keep (quoted string)
                                      (default = none, possible: all sra fastq bam)
         --refresh-meta               Re-query SRA to update metadata cache
