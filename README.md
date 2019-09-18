@@ -169,12 +169,13 @@ Then for each SRR:
 
 The wrapper script also has some useful features, for example:
 
-*   Automatically caches downloaded SRA metadata for your query and will reuse cached metadata for the same SRA query.  Metadata can be refreshed with `--refresh-meta`.
-*   Automatically looks for and reuses any existing completed intermediate files from each processing step in case e.g. the script got killed. You simply restart the script with same parameters and it will come right back to where it left off. This can be overriden with `--regen-all`.
-*   If processing fails for any run it will output that there was an error and automatically move on to the next run.
-*   It saves a ton of space by only keeping the required result files necessary to complete all processing steps for each run.  This can be overriden by specifying file types to keep using  `--keep ` option.
-*   I've found HTSeq to be the slowest step in the pipeline by far, also because it is only single-threaded while the other compute intensive steps are parallelized.  So to greatly improve performance the wrapper script by default runs HTSeq jobs in parallel batches after `--num-threads` runs have completed.  This can be overriden with `--no-htseq-par`.
-*   HTSeq quantification can be skipped with `--no-htseq` and only STAR quantification files will be generated.
+*   Automatically caches downloaded SRA metadata from your query and will reuse cached metadata for the same SRA query.  Metadata can be refreshed with `--refresh-meta`.
+*   Automatically looks for and reuses any existing and completed intermediate files from each processing step in case e.g. the script got killed. You simply restart the script with same parameters and it will come right back to where it left off. This can be overriden with `--regen-all`.
+*   If any processing step fails for a run it will output the error details and automatically move on to the next run.
+*   It saves a ton of space by only keeping the required result files necessary to complete all processing steps for each run.  This can be overriden by specifying file types to keep using  the `--keep ` option.
+*   STAR detected novel splice junctions can be automatically filtered after the 1st pass with the option `--star-filter-sj-pass1`.
+*   I've found HTSeq to be the slowest step in the pipeline by far, also because it is only single-threaded while the other compute intensive steps can be parallelized.  So to greatly improve performance the wrapper script by default runs HTSeq jobs in parallel batches after `--num-threads` runs have completed.  This can be overriden with `--no-htseq-par`.  You can make the batch size smaller than `--num-threads` with `--htseq-par-n`.
+*   HTSeq quantification can be skipped with `--no-htseq` and then only STAR quantification files will be generated.
 
 ## References
 
