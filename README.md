@@ -62,25 +62,6 @@ use the `ascp` command.
 
 ## Usage
 
-#### Creating a STAR genome index
-
-For example, for GRCh38 using the current NCI GDC FASTA and GENCODE GTF
-versions (which will require ~36GB RAM to map reads using this genome):
-
-```bash
-mkdir star_grch38p2_d1_vd1_gtfv22
-
-STAR \
---runThreadN 12 \
---runMode genomeGenerate \
---genomeDir star_grch38p2_d1_vd1_gtfv22 \
---genomeFastaFiles GRCh38.d1.vd1.fa \
---sjdbGTFfile gencode.v22.annotation.gtf \
---sjdbOverhang 100
-```
-
-#### Wrapper script usage
-
 ```
 $ ./run_star_htseq.pl --help
 Usage:
@@ -157,15 +138,17 @@ The `--sra-query` can be any NCBI Entrez query string, e.g.
 
 The `run_star_htseq.pl` wrapper script encapsulates the following steps:
 
-1.  Query SRA (or load SRR list) and then fetch and cache SRR metadata (with Entrez Direct tools)
+1.  Automatically creates a STAR genome index if doesn't already exist using the default or specified genome FASTA and GTF annotation file paths.
+
+2.  Query SRA (or load SRR list) and then fetch and cache SRR metadata (with Entrez Direct tools)
 
 Then for each SRR:
 
-2.  Download SRA .sra file (via direct FTP URL, fallback to SRA toolkit prefetch) or with `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
-3.  Validate SRA vdb file (with SRA toolkit)
-4.  Dump FASTQs from vdb (with parallel-fastq-dump wrapper to fastq-dump)
-5.  Run STAR alignment and gene expression quantification
-6.  Run HTSeq gene expression quantification
+3.  Download SRA .sra file (via direct FTP URL, fallback to SRA toolkit prefetch) or with `--use-ena-fastqs` download ENA SRA FASTQs (via direct FTP URL) and skip to step 5
+4.  Validate SRA vdb file (with SRA toolkit)
+5.  Dump FASTQs from vdb (with parallel-fastq-dump wrapper to fastq-dump)
+6.  Run STAR alignment and gene expression quantification
+7.  Run HTSeq gene expression quantification
 
 The wrapper script also has some useful features, for example:
 
