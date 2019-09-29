@@ -46,7 +46,7 @@ my @states = qw(
     MV_BAM MV_TX_BAM MV_COUNTS MV_ALL HTSEQ
 );
 my $sra_ftp_run_url_prefix =
-    'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra/SRR';
+    'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra';
 my $ena_ftp_fastq_url_prefix = 'ftp://ftp.sra.ebi.ac.uk/vol1/fastq';
 my @bam_rg2sra_fields = (
     { RG => 'ID', SRA => 'Run' },
@@ -197,7 +197,7 @@ if ($run_file or @run_ids) {
         push @run_ids, @file_run_ids;
     }
     @run_ids = uniq sort { $a cmp $b }
-        grep { /\S/ && /^SRR/ }
+        grep { /\S/ && /^[A-Z]RR/ }
         map { s/\s+//gr } @run_ids;
     print scalar(@run_ids), " total unique runs\n";
     my @sra_query_parts = ($sra_query) if $sra_query;
@@ -221,7 +221,7 @@ if (!-f $run_meta_pls_file or $refresh_meta) {
     my %seen_runs;
     $run_meta = [ grep {
         $_->{'Run'} =~ /\S/ &&
-        $_->{'Run'} =~ /^SRR/ &&
+        $_->{'Run'} =~ /^[A-Z]RR/ &&
         !$seen_runs{$_->{'Run'}}++
     } @{$run_meta} ];
     $run_meta = [
@@ -409,6 +409,7 @@ RUN: for my $run_idx (0 .. $#{$run_meta}) {
                 if (!download_url(
                     join('/',
                         $sra_ftp_run_url_prefix,
+                        substr($run_id, 0, 3),
                         substr($run_id, 0, 6),
                         $run_id,
                     ),
