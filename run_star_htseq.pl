@@ -59,8 +59,8 @@ my $procs = Unix::Processors->new();
 
 # options
 my $sra_query = '';
-my $srr_file = '';
-my @srr_ids = ();
+my $run_file = '';
+my @run_ids = ();
 my $out_dir = File::Spec->abs2rel();
 my $tmp_dir = cwd();
 my $num_threads = -1;
@@ -88,8 +88,8 @@ my $verbose = 0;
 my $debug = 0;
 GetOptions(
     'sra-query:s' => \$sra_query,
-    'srr-file:s' => \$srr_file,
-    'srr-ids:s' => \@srr_ids,
+    'run-file:s' => \$run_file,
+    'run-ids:s' => \@run_ids,
     'out-dir:s' => \$out_dir,
     'tmp-dir:s' => \$tmp_dir,
     'num-threads:i' => \$num_threads,
@@ -116,21 +116,21 @@ GetOptions(
     'verbose' => \$verbose,
     'debug' => \$debug,
 ) || pod2usage(-verbose => 0);
-@srr_ids = split(' ', join(' ', @srr_ids));
+@run_ids = split(' ', join(' ', @run_ids));
 @keep = split(' ', join(' ', @keep));
 my %keep = map { $_ => 1 } @keep;
 %keep = ( all => 1 ) if $keep{all};
 if (!$sra_query) {
-    if (!$srr_file) {
-        if (!@srr_ids) {
+    if (!$run_file) {
+        if (!@run_ids) {
             pod2usage(
                 -message => 'One or more of required: '.
-                    '--sra-query, --srr-file or --srr-ids'
+                    '--sra-query, --run-file or --run-ids'
             );
         }
     }
-    elsif (!-f $srr_file) {
-        pod2usage(-message => 'Invalid --srr-file');
+    elsif (!-f $run_file) {
+        pod2usage(-message => 'Invalid --run-file');
     }
 }
 for my $genome_fasta_file (@genome_fasta_files) {
@@ -186,27 +186,27 @@ if (!-d $genome_dir) {
     }
     print "\n";
 }
-if ($srr_file or @srr_ids) {
-    print "Command line: ", scalar(@srr_ids), " SRRs\n" if @srr_ids;
-    if ($srr_file) {
-        print "Reading $srr_file: ";
-        open(my $fh, '<', $srr_file);
-        my @file_srr_ids = <$fh>;
+if ($run_file or @run_ids) {
+    print "Command line: ", scalar(@run_ids), " runs\n" if @run_ids;
+    if ($run_file) {
+        print "Reading $run_file: ";
+        open(my $fh, '<', $run_file);
+        my @file_run_ids = <$fh>;
         close($fh);
-        print scalar(@file_srr_ids), " SRRs\n";
-        push @srr_ids, @file_srr_ids;
+        print scalar(@file_run_ids), " runs\n";
+        push @run_ids, @file_run_ids;
     }
-    @srr_ids = uniq sort { $a cmp $b }
+    @run_ids = uniq sort { $a cmp $b }
         grep { /\S/ && /^SRR/ }
-        map { s/\s+//gr } @srr_ids;
-    print scalar(@srr_ids), " total unique SRRs\n";
+        map { s/\s+//gr } @run_ids;
+    print scalar(@run_ids), " total unique runs\n";
     my @sra_query_parts = ($sra_query) if $sra_query;
-    push @sra_query_parts, map { "$_\[Accession\]" } @srr_ids;
+    push @sra_query_parts, map { "$_\[Accession\]" } @run_ids;
     $sra_query = join(' OR ', @sra_query_parts);
 }
-my $srr_meta;
-my $srr_meta_pls_file = "$tmp_dir/".md5_hex($sra_query).".srr_meta.pls";
-if (!-f $srr_meta_pls_file or $refresh_meta) {
+my $run_meta;
+my $run_meta_pls_file = "$tmp_dir/".md5_hex($sra_query).".run_meta.pls";
+if (!-f $run_meta_pls_file or $refresh_meta) {
     $sra_query =~ s/'/\'/g;
     my $sra_cmd_str = join(' | ',
         "esearch -db sra -query '$sra_query'",
@@ -217,30 +217,30 @@ if (!-f $srr_meta_pls_file or $refresh_meta) {
     my $sra_meta_csv_str = `$sra_cmd_str`;
     die +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
         ": efetch failed (exit code ", $? >> 8, ")\n" if $?;
-    $srr_meta = csv(in => \$sra_meta_csv_str, headers => 'auto');
-    my %seen_srrs;
-    $srr_meta = [ grep {
+    $run_meta = csv(in => \$sra_meta_csv_str, headers => 'auto');
+    my %seen_runs;
+    $run_meta = [ grep {
         $_->{'Run'} =~ /\S/ &&
         $_->{'Run'} =~ /^SRR/ &&
-        !$seen_srrs{$_->{'Run'}}++
-    } @{$srr_meta} ];
-    $srr_meta = [
-        sort { $a->{'Run'} cmp $b->{'Run'} } @{$srr_meta}
+        !$seen_runs{$_->{'Run'}}++
+    } @{$run_meta} ];
+    $run_meta = [
+        sort { $a->{'Run'} cmp $b->{'Run'} } @{$run_meta}
     ];
-    print scalar(@{$srr_meta}), " runs found\n";
+    print scalar(@{$run_meta}), " runs found\n";
     print "Caching query metadata\n";
     if (!$dry_run) {
-        lock_nstore($srr_meta, $srr_meta_pls_file);
+        lock_nstore($run_meta, $run_meta_pls_file);
     }
 }
 else {
     print "Loading cached query metadata\n";
-    $srr_meta = lock_retrieve($srr_meta_pls_file);
-    print scalar(@{$srr_meta}), " runs found\n";
+    $run_meta = lock_retrieve($run_meta_pls_file);
+    print scalar(@{$run_meta}), " runs found\n";
 }
 if ($debug) {
-    print "SRR IDs: ", Dumper([ map { $_->{'Run'} } @{$srr_meta} ]),
-          "SRR metadata: ", Dumper($srr_meta);
+    print "Run IDs: ", Dumper([ map { $_->{'Run'} } @{$run_meta} ]),
+          "Run metadata: ", Dumper($run_meta);
 }
 print "\n";
 exit if $query_only;
@@ -248,21 +248,21 @@ if (!$dry_run) {
     make_path($out_dir) unless -d $out_dir;
     make_path($tmp_dir) unless -d $tmp_dir;
 }
-my @srrs_completed = ();
+my @runs_completed = ();
 my @htseq_run_data = ();
-SRR: for my $run_idx (0 .. $#{$srr_meta}) {
-    my $srr_id = $srr_meta->[$run_idx]->{'Run'};
-    print "[$srr_id]\n";
-    my $tmp_srr_dir = File::Spec->abs2rel("$tmp_dir/$srr_id");
-    my $out_srr_dir = File::Spec->abs2rel("$out_dir/$srr_id");
-    my $state_file = "$tmp_srr_dir/.state";
+RUN: for my $run_idx (0 .. $#{$run_meta}) {
+    my $run_id = $run_meta->[$run_idx]->{'Run'};
+    print "[$run_id]\n";
+    my $tmp_run_dir = File::Spec->abs2rel("$tmp_dir/$run_id");
+    my $out_run_dir = File::Spec->abs2rel("$out_dir/$run_id");
+    my $state_file = "$tmp_run_dir/.state";
     my $init_state = (!$regen_all and -f $state_file)
         ? read_state($state_file) : {};
     my %tmp_file_name = (
-        'sra' => "$srr_id.sra",
+        'sra' => "$run_id.sra",
         (map {
             +"fastq$_" => join('',
-                $srr_id,
+                $run_id,
                 ($use_ena_fastqs and !$init_state->{SRA_FASTQ})
                     ? '_' : '_pass_',
                 "$_.fastq.gz"
@@ -274,21 +274,21 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         'htseq_counts' => 'htseq.counts.txt',
     );
     my %tmp_file = map {
-        $_ => "$tmp_srr_dir/$tmp_file_name{$_}"
+        $_ => "$tmp_run_dir/$tmp_file_name{$_}"
     } keys %tmp_file_name;
     my (%out_file_name, %out_file);
     if ($keep{all}) {
         %out_file_name = %tmp_file_name;
         %out_file = map {
-            $_ => "$out_srr_dir/$out_file_name{$_}"
+            $_ => "$out_run_dir/$out_file_name{$_}"
         } keys %out_file_name;
     }
     elsif ($keep{bam}) {
         %out_file_name = (
-            'star_bam' => "${srr_id}.Aligned.bam",
-            'star_tx_bam' => "${srr_id}.Aligned.toTranscriptome.bam",
-            'star_counts' => "${srr_id}.star.counts.txt",
-            'htseq_counts' => "${srr_id}.htseq.counts.txt",
+            'star_bam' => "${run_id}.Aligned.bam",
+            'star_tx_bam' => "${run_id}.Aligned.toTranscriptome.bam",
+            'star_counts' => "${run_id}.star.counts.txt",
+            'htseq_counts' => "${run_id}.htseq.counts.txt",
         );
         %out_file = map {
             $_ => "$out_dir/$out_file_name{$_}"
@@ -316,8 +316,8 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     }
     else {
         %out_file_name = (
-            'star_counts' => "${srr_id}.star.counts.txt",
-            'htseq_counts' => "${srr_id}.htseq.counts.txt",
+            'star_counts' => "${run_id}.star.counts.txt",
+            'htseq_counts' => "${run_id}.htseq.counts.txt",
         );
         %out_file = map {
             $_ => "$out_dir/$out_file_name{$_}"
@@ -358,19 +358,19 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     my $state = { %{$init_state} };
     if (!$state->{STAR_PASS2}) {
         if (!$state->{TMP_DIR}) {
-            if (-d $tmp_srr_dir) {
-                print "Cleaning directory $tmp_srr_dir\n";
-                remove_tree($tmp_srr_dir, { safe => 1 }) unless $dry_run;
+            if (-d $tmp_run_dir) {
+                print "Cleaning directory $tmp_run_dir\n";
+                remove_tree($tmp_run_dir, { safe => 1 }) unless $dry_run;
             }
             else {
-                print "Creating directory $tmp_srr_dir\n";
-                make_path($tmp_srr_dir) unless $dry_run;
+                print "Creating directory $tmp_run_dir\n";
+                make_path($tmp_run_dir) unless $dry_run;
             }
             $state->{TMP_DIR}++;
             write_state($state_file, $state) unless $dry_run;
         }
         else {
-            print "Using existing directory $tmp_srr_dir\n";
+            print "Using existing directory $tmp_run_dir\n";
         }
         if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
             if (!$state->{ENA_FASTQ}) {
@@ -380,11 +380,11 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     if (download_url(
                         join('/',
                             $ena_ftp_fastq_url_prefix,
-                            substr($srr_id, 0, 6),
-                            '00'.substr($srr_id, -1),
-                            $srr_id,
+                            substr($run_id, 0, 6),
+                            '00'.substr($run_id, -1),
+                            $run_id,
                         ),
-                        $tmp_srr_dir,
+                        $tmp_run_dir,
                         $tmp_file_name{"fastq$n"},
                     )) {
                         if (++$fastqs_downloaded == 2) {
@@ -409,10 +409,10 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 if (!download_url(
                     join('/',
                         $sra_ftp_run_url_prefix,
-                        substr($srr_id, 0, 6),
-                        $srr_id,
+                        substr($run_id, 0, 6),
+                        $run_id,
                     ),
-                    $tmp_srr_dir,
+                    $tmp_run_dir,
                     $tmp_file_name{'sra'},
                 )) {
                     if (-f $tmp_file{'sra'}) {
@@ -421,7 +421,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     }
                     print 'Using SRA Toolkit prefetch';
                     my $dl_cmd_str =
-                        "prefetch $srr_id -o '$tmp_file{'sra'}'";
+                        "prefetch $run_id -o '$tmp_file{'sra'}'";
                     print "\n$dl_cmd_str" if $verbose or $debug;
                     if (!$dry_run) {
                         if (system($dl_cmd_str)) {
@@ -430,7 +430,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                                 -t STDERR ? colored('ERROR', 'red') : 'ERROR'
                             ), ": download failed (exit code ", $? >> 8,
                             ")\n\n";
-                            next SRR;
+                            next RUN;
                         }
                     }
                     else {
@@ -450,7 +450,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
                             ": vdb-validate failed (exit code ", $? >> 8,
                             ")\n\n";
-                        next SRR;
+                        next RUN;
                     }
                 }
                 $state->{SRA}++;
@@ -464,8 +464,8 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     "parallel-fastq-dump",
                     "--threads $num_threads",
                     "--sra-id '$tmp_file{'sra'}'",
-                    "--outdir '$tmp_srr_dir'",
-                    "--tmpdir '$tmp_srr_dir'",
+                    "--outdir '$tmp_run_dir'",
+                    "--tmpdir '$tmp_run_dir'",
                     "--gzip",
                     "--skip-technical",
                     "--readids",
@@ -482,7 +482,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
                             ": parallel-fastq-dump failed (exit code ",
                             $? >> 8, ")\n\n";
-                        next SRR;
+                        next RUN;
                     }
                 }
                 $state->{SRA_FASTQ}++;
@@ -494,15 +494,15 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             }
         }
         my $pass1_dir_name = '_STARpass1';
-        my $pass1_dir = "$tmp_srr_dir/$pass1_dir_name";
+        my $pass1_dir = "$tmp_run_dir/$pass1_dir_name";
         my $pass1_sj_file_name = 'SJ.out.tab';
         my $pass1_sj_file = "$pass1_dir/$pass1_sj_file_name";
         my $pass1_sj_filter_file_name = 'SJ.filtered.out.tab';
         my $pass1_sj_filter_file = "$pass1_dir/$pass1_sj_filter_file_name";
         my @bam_rg_fields = map {
-            "\"$_->{'RG'}:$srr_meta->[$run_idx]->{$_->{'SRA'}}\""
+            "\"$_->{'RG'}:$run_meta->[$run_idx]->{$_->{'SRA'}}\""
         } grep {
-            $srr_meta->[$run_idx]->{$_->{'SRA'}} =~ /\S/
+            $run_meta->[$run_idx]->{$_->{'SRA'}} =~ /\S/
         } @bam_rg2sra_fields;
         my @quant_modes = ('GeneCounts');
         push @quant_modes, 'TranscriptomeSAM' if $gen_tx_bam;
@@ -545,7 +545,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         exit($?) if ($? & 127) == SIGINT;
                         warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
                             ": STAR failed (exit code ", $? >> 8, ")\n\n";
-                        next SRR;
+                        next RUN;
                     }
                 }
                 print "Filtering $pass1_sj_file_name: ";
@@ -601,7 +601,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             "--genomeDir '$genome_dir'",
             "--genomeLoad", $genome_shm ? "LoadAndKeep" : "NoSharedMemory",
             "--limitSjdbInsertNsj 1200000",
-            "--outFileNamePrefix '$tmp_srr_dir/'",
+            "--outFileNamePrefix '$tmp_run_dir/'",
             "--outFilterIntronMotifs None",
             "--outFilterMatchNminOverLread 0.33",
             "--outFilterMismatchNmax 999",
@@ -632,7 +632,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 exit($?) if ($? & 127) == SIGINT;
                 warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
                     ": STAR failed (exit code ", $? >> 8, ")\n\n";
-                next SRR;
+                next RUN;
             }
         }
         $state->{STAR_PASS2}++;
@@ -640,37 +640,37 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     }
     if ($keep{all}) {
         if (!$state->{MV_ALL}) {
-            if ($out_srr_dir ne $tmp_srr_dir) {
+            if ($out_run_dir ne $tmp_run_dir) {
                 if ($init_state->{TMP_DIR}) {
-                    print "Using existing directory $tmp_srr_dir\n";
+                    print "Using existing directory $tmp_run_dir\n";
                 }
-                if (move_data($tmp_srr_dir, $out_srr_dir)) {
+                if (move_data($tmp_run_dir, $out_run_dir)) {
                     $state->{MV_ALL}++;
                     write_state($state_file, $state) unless $dry_run;
                 }
                 else {
-                    next SRR;
+                    next RUN;
                 }
             }
             elsif ($init_state->{STAR_PASS2}) {
-                print "Completed $out_srr_dir directory exists\n";
+                print "Completed $out_run_dir directory exists\n";
             }
         }
         else {
-            print "Completed $out_srr_dir directory exists\n";
+            print "Completed $out_run_dir directory exists\n";
         }
     }
     elsif ($keep{bam}) {
         if (!$state->{MV_BAM}) {
             if ($init_state->{TMP_DIR}) {
-                print "Using existing directory $tmp_srr_dir\n";
+                print "Using existing directory $tmp_run_dir\n";
             }
             if (move_data($tmp_file{'star_bam'}, $out_file{'star_bam'})) {
                 $state->{MV_BAM}++;
                 write_state($state_file, $state) unless $dry_run;
             }
             else {
-                next SRR;
+                next RUN;
             }
         }
         else {
@@ -685,7 +685,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                     write_state($state_file, $state) unless $dry_run;
                 }
                 else {
-                    next SRR;
+                    next RUN;
                 }
             }
             else {
@@ -696,7 +696,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
     if (!$keep{all} or $keep{bam}) {
         if (!$state->{MV_COUNTS}) {
             if (!$keep{bam} and $init_state->{TMP_DIR}) {
-                print "Using existing directory $tmp_srr_dir\n";
+                print "Using existing directory $tmp_run_dir\n";
             }
             if (move_data(
                 $tmp_file{'star_counts'}, $out_file{'star_counts'}
@@ -705,7 +705,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 write_state($state_file, $state) unless $dry_run;
             }
             else {
-                next SRR;
+                next RUN;
             }
         }
         else {
@@ -730,9 +730,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
             $htseq_cmd_str =~ s/\s+/ /g;
             if ($htseq_par) {
                 push @htseq_run_data, {
-                    'srr_id' => $srr_id,
+                    'run_id' => $run_id,
                     'cmd_str' => $htseq_cmd_str,
-                    'tmp_srr_dir' => $tmp_srr_dir,
+                    'tmp_run_dir' => $tmp_run_dir,
                     'out_file_name' => $out_file_name{'htseq_counts'},
                     'out_file' => $out_file{'htseq_counts'},
                     'state' => $state,
@@ -740,9 +740,9 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                 };
                 if (!$keep{all} and !$keep{bam}) {
                     if ($state->{TMP_DIR}) {
-                        print "Cleaning directory $tmp_srr_dir except BAMs\n";
+                        print "Cleaning directory $tmp_run_dir except BAMs\n";
                     }
-                    if (!$dry_run and -d $tmp_srr_dir) {
+                    if (!$dry_run and -d $tmp_run_dir) {
                         finddepth({
                             no_chdir => 1,
                             wanted => sub {
@@ -752,28 +752,28 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                                               $_ eq $state_file;
                                     unlink $_;
                                 }
-                                elsif (-d and $_ ne $tmp_srr_dir) {
+                                elsif (-d and $_ ne $tmp_run_dir) {
                                     remove_tree($_, { safe => 1 });
                                 }
                             },
-                        }, $tmp_srr_dir);
+                        }, $tmp_run_dir);
                     }
                 }
                 if (
                     scalar(@htseq_run_data) % $htseq_par_n == 0 or
-                    $run_idx == $#{$srr_meta}
+                    $run_idx == $#{$run_meta}
                 ) {
                     print "\nRunning HTSeq quantification\n";
                     my $pm = Parallel::ForkManager->new($htseq_par_n);
                     $pm->run_on_finish(sub {
-                        my ($pid, $exit_code, $srr_id) = @_;
-                        push @srrs_completed, $srr_id unless $exit_code;
+                        my ($pid, $exit_code, $run_id) = @_;
+                        push @runs_completed, $run_id unless $exit_code;
                     });
                     HTSEQ: for my $htseq_run (@htseq_run_data) {
-                        $pm->start($htseq_run->{'srr_id'}) and next HTSEQ;
-                        print "[$htseq_run->{'srr_id'}] ",
+                        $pm->start($htseq_run->{'run_id'}) and next HTSEQ;
+                        print "[$htseq_run->{'run_id'}] ",
                               "Running htseq-count\n";
-                        print "[$htseq_run->{'srr_id'}] ",
+                        print "[$htseq_run->{'run_id'}] ",
                               "$htseq_run->{'cmd_str'}\n"
                               if $verbose or $debug;
                         my $htseq_counts;
@@ -784,11 +784,11 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         }
                         if ($exit_code) {
                             if (($exit_code & 127) == SIGINT) {
-                                warn "[$htseq_run->{'srr_id'}] ",
+                                warn "[$htseq_run->{'run_id'}] ",
                                      "htseq-count interrupted\n";
                             }
                             else {
-                                warn "[$htseq_run->{'srr_id'}] ",
+                                warn "[$htseq_run->{'run_id'}] ",
                                      +(-t STDERR
                                          ? colored('ERROR', 'red') : 'ERROR'
                                      ), ": htseq-count failed (exit code ",
@@ -796,7 +796,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                             }
                         }
                         else {
-                            print "[$htseq_run->{'srr_id'}] ",
+                            print "[$htseq_run->{'run_id'}] ",
                                   "Writing $htseq_run->{'out_file_name'}\n";
                             if (!$dry_run) {
                                 open(my $fh, '>', $htseq_run->{'out_file'});
@@ -812,16 +812,16 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                             }
                             if (!$keep{all}) {
                                 if ($htseq_run->{'state'}->{TMP_DIR}) {
-                                    print "[$htseq_run->{'srr_id'}] ",
+                                    print "[$htseq_run->{'run_id'}] ",
                                           "Removing directory ",
-                                          "$htseq_run->{'tmp_srr_dir'}\n";
+                                          "$htseq_run->{'tmp_run_dir'}\n";
                                 }
                                 if (
                                     !$dry_run and
-                                    -d $htseq_run->{'tmp_srr_dir'}
+                                    -d $htseq_run->{'tmp_run_dir'}
                                 ) {
                                     remove_tree(
-                                        $htseq_run->{'tmp_srr_dir'},
+                                        $htseq_run->{'tmp_run_dir'},
                                         { safe => 1 }
                                     );
                                 }
@@ -851,7 +851,7 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
                         ? colored('ERROR', 'red') : 'ERROR'
                     ), ": htseq-count failed (exit code ",
                         $exit_code >> 8, ")\n";
-                    next SRR;
+                    next RUN;
                 }
                 else {
                     print "Writing $out_file_name{'htseq_counts'}\n";
@@ -870,20 +870,20 @@ SRR: for my $run_idx (0 .. $#{$srr_meta}) {
         }
     }
     if (!$htseq or $state->{HTSEQ} or !$htseq_par) {
-        push @srrs_completed, $srr_id;
+        push @runs_completed, $run_id;
         if (!$keep{all}) {
             if ($state->{TMP_DIR}) {
-                print "Removing directory $tmp_srr_dir\n";
+                print "Removing directory $tmp_run_dir\n";
             }
-            if (!$dry_run and -d $tmp_srr_dir) {
-                remove_tree($tmp_srr_dir, { safe => 1 });
+            if (!$dry_run and -d $tmp_run_dir) {
+                remove_tree($tmp_run_dir, { safe => 1 });
             }
         }
     }
     print "\n";
 }
-print scalar(@srrs_completed), " / ", scalar(@{$srr_meta}),
-      " SRRs completed\n\n",
+print scalar(@runs_completed), " / ", scalar(@{$run_meta}),
+      " runs completed\n\n",
       "STAR-HTSeq pipeline complete [", scalar localtime, "]\n\n";
 
 sub read_state {
@@ -972,12 +972,12 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
  run_star_htseq.pl [options]
 
  Options:
-    --sra-query <str>            SRA query string to obtain SRR run metadata
-                                 (required if no --srr-file or --srr-ids)
-    --srr-file <file>            SRR ID list file
-                                 (required if no --srr-query or --srr-ids)
-    --srr_ids <str>              SRR IDs (quoted string)
-                                 (required if no --srr-query or --srr-file)
+    --sra-query <str>            SRA query string to obtain run metadata
+                                 (required if no --run-file or --run-ids)
+    --run-file <file>            Run ID list file
+                                 (required if no --run-query or --run-ids)
+    --run-ids <str>              Run IDs (quoted string)
+                                 (required if no --run-query or --run-file)
     --out-dir <dir>              Output directory
                                  (default = current dir)
     --tmp-dir <dir>              Temporary working directory

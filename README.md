@@ -68,12 +68,12 @@ Usage:
      run_star_htseq.pl [options]
 
      Options:
-        --sra-query <str>            SRA query string to obtain SRR run metadata
-                                     (required if no --srr-file or --srr-ids)
-        --srr-file <file>            SRR ID list file
-                                     (required if no --srr-query or --srr-ids)
-        --srr_ids <str>              SRR IDs (quoted string)
-                                     (required if no --srr-query or --srr-file)
+        --sra-query <str>            SRA query string to obtain run metadata
+                                     (required if no --run-file or --run-ids)
+        --run-file <file>            Run ID list file
+                                     (required if no --run-query or --run-ids)
+        --run-ids <str>              Run IDs (quoted string)
+                                     (required if no --run-query or --run-file)
         --out-dir <dir>              Output directory
                                      (default = current dir)
         --tmp-dir <dir>              Temporary working directory
