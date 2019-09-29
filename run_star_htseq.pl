@@ -23,6 +23,7 @@ use Storable qw(lock_nstore lock_retrieve);
 use Term::ANSIColor;
 use Text::CSV qw(csv);
 use Unix::Processors;
+use URI::Split qw(uri_split uri_join);
 use Data::Dumper;
 
 sub sig_handler {
@@ -45,9 +46,11 @@ my @states = qw(
     TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR_PASS1 STAR_PASS2
     MV_BAM MV_TX_BAM MV_COUNTS MV_ALL HTSEQ
 );
-my $sra_ftp_run_url_prefix =
+my $sra_run_ftp_url_prefix =
     'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra';
-my $ena_ftp_fastq_url_prefix = 'ftp://ftp.sra.ebi.ac.uk/vol1/fastq';
+my $ena_fastq_ftp_search_url =
+    'https://www.ebi.ac.uk/ena/data/warehouse/filereport'.
+    '?result=read_run&fields=fastq_ftp&accession=';
 my @bam_rg2sra_fields = (
     { RG => 'ID', SRA => 'Run' },
     { RG => 'SM', SRA => 'Sample' },
@@ -250,7 +253,7 @@ if (!$dry_run) {
 }
 my @runs_completed = ();
 my @htseq_run_data = ();
-RUN: for my $run_idx (0 .. $#{$run_meta}) {
+RUN: for my $run_idx (0..$#{$run_meta}) {
     my $run_id = $run_meta->[$run_idx]->{'Run'};
     print "[$run_id]\n";
     my $tmp_run_dir = File::Spec->abs2rel("$tmp_dir/$run_id");
@@ -374,28 +377,45 @@ RUN: for my $run_idx (0 .. $#{$run_meta}) {
         }
         if ($use_ena_fastqs and !$state->{SRA_FASTQ}) {
             if (!$state->{ENA_FASTQ}) {
-                my $fastqs_downloaded = 0;
-                for my $n (1..2) {
-                    print "Downloading $tmp_file_name{\"fastq$n\"}\n";
-                    if (download_url(
-                        join('/',
-                            $ena_ftp_fastq_url_prefix,
-                            substr($run_id, 0, 6),
-                            '00'.substr($run_id, -1),
-                            $run_id,
-                        ),
-                        $tmp_run_dir,
-                        $tmp_file_name{"fastq$n"},
-                    )) {
-                        if (++$fastqs_downloaded == 2) {
-                            $state->{ENA_FASTQ}++;
-                            write_state($state_file, $state) unless $dry_run;
+                print 'Querying ENA: ';
+                my $response = $ua->get($ena_fastq_ftp_search_url . $run_id);
+                if ($response->is_success) {
+                    if ($response->decoded_content ne '') {
+                        print "OK\n";
+                        my @response_lines = split(
+                            "\n", $response->decoded_content
+                        );
+                        my @fastq_ftp_urls = map { "ftp://$_" } split(
+                            ';', $response_lines[$#response_lines], 2
+                        );
+                        my $fastqs_downloaded = 0;
+                        for my $n (1..2) {
+                            print "Downloading $tmp_file_name{\"fastq$n\"}\n";
+                            if (download_url(
+                                $fastq_ftp_urls[$n - 1],
+                                $tmp_run_dir,
+                                $tmp_file_name{"fastq$n"},
+                            )) {
+                                if (++$fastqs_downloaded == 2) {
+                                    $state->{ENA_FASTQ}++;
+                                    write_state($state_file, $state)
+                                        unless $dry_run;
+                                }
+                            }
+                            elsif (-f $tmp_file{"fastq$n"})  {
+                                print "Removing $tmp_file_name{\"fastq$n\"}\n";
+                                unlink $tmp_file{"fastq$n"};
+                            }
                         }
                     }
-                    elsif (-f $tmp_file{"fastq$n"})  {
-                        print "Removing $tmp_file_name{\"fastq$n\"}\n";
-                        unlink $tmp_file{"fastq$n"};
+                    else {
+                        warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                             ": no FASTQs found for $run_id\n";
                     }
+                }
+                else {
+                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                         ': failed', $response->status_line, "\n";
                 }
             }
             else {
@@ -408,10 +428,11 @@ RUN: for my $run_idx (0 .. $#{$run_meta}) {
                 print "Downloading $tmp_file_name{'sra'}\n";
                 if (!download_url(
                     join('/',
-                        $sra_ftp_run_url_prefix,
+                        $sra_run_ftp_url_prefix,
                         substr($run_id, 0, 3),
                         substr($run_id, 0, 6),
                         $run_id,
+                        $tmp_file_name{'sra'},
                     ),
                     $tmp_run_dir,
                     $tmp_file_name{'sra'},
@@ -903,9 +924,12 @@ sub write_state {
 }
 
 sub download_url {
-    my ($base_url, $dir, $name) = @_;
-    my $url = "$base_url/$name";
-    print 'Checking SRA FTP: ';
+    my ($url, $dir, $name) = @_;
+    my @url_parts = (uri_split($url))[0..2];
+    my @path_segments = split('/', $url_parts[-1]);
+    my $base_path = join('/', @path_segments[0..$#path_segments-1]);
+    my $base_url = uri_join(@url_parts[0..1], $base_path);
+    print 'Checking FTP: ';
     if ($ua->head($base_url)->is_success) {
         print "OK\n";
         my $dl_cmd_str;
