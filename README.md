@@ -172,5 +172,5 @@ The wrapper script also has some useful features, for example:
 <a href="https://www.ncbi.nlm.nih.gov/home/tools/" target="_blank">Entrez Direct utilities and SRA toolkit</a><br/>
 <a href="https://github.com/rvalieris/parallel-fastq-dump" target="_blank">parallel-fastq-dump</a><br/>
 <a href="https://github.com/alexdobin/STAR" target="_blank">STAR</a><br/>
-<a href="https://github.com/simon-anders/htseq" target="_blank">HTSeq</a>
+<a href="https://github.com/simon-anders/htseq" target="_blank">HTSeq</a><br/>
 <a href="http://subread.sourceforge.net/" target="_blank">Subread</a>
