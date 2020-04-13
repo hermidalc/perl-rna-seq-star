@@ -755,6 +755,7 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                 "-a '$gtf_file'",
                 "-o '$out_file{'subread_counts'}'",
                 "'$out_file{'star_bam'}'",
+                $debug ? "" : (">", File::Spec->devnull()),
             );
             $fcounts_cmd_str =~ s/\s+/ /g;
             print "Running featreCounts quantification\n";
