@@ -10,24 +10,28 @@ Install latest
 <a href="https://docs.conda.io/en/latest/miniconda.html" target="_blank">
 Miniconda
 </a>
-or
-<a href="https://www.anaconda.com/distribution/" target="_blank">
-Anaconda
-</a>
-for Python 3.x. and make sure `conda` is updated.
+for Python 3.
 
 Clone the Github repository:
 
 ```bash
-git clone git@github.com:hermidalc/rna-seq-star-htseq.git
+git clone git@github.com:hermidalc/rna-seq-star.git
 ```
 
-Create `rna-seq-star-htseq` conda environment:
+Create `rna-seq-star` conda environment, either with Intel MKL:
 
 ```bash
-cd rna-seq-star-htseq
-conda env create -f environment.yml
-conda activate rna-seq-star-htseq
+cd rna-seq-star
+conda env create -f envs/rna-seq-star-mkl.yml
+conda activate rna-seq-star
+```
+
+or without:
+
+```bash
+cd rna-seq-star
+conda env create -f envs/rna-seq-star.yml
+conda activate rna-seq-star
 ```
 
 Configure SRA toolkit:
