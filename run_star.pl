@@ -232,6 +232,7 @@ print "\n";
 exit if $query_only;
 if (!-d $genome_dir) {
     print "Creating STAR genome index $genome_dir\n";
+    make_path($genome_dir);
     my @star_cmd = (
         "STAR",
         "--runThreadN $num_threads",
