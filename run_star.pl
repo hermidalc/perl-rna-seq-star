@@ -82,12 +82,11 @@ my $genome_shm = 0;
 my $regen_all = 0;
 my $gen_tx_bam = 0;
 my $fcounts = 1;
-my $fcounts_stranded = 0;
 my $htseq = 1;
 my $htseq_par = 1;
 my $htseq_num_par = -1;
 my $htseq_mode = 'intersection-nonempty';
-my $htseq_stranded = 'no';
+my $stranded = 'no';
 my $min_aqual = 10;
 my $dry_run = 0;
 my $verbose = 0;
@@ -114,12 +113,11 @@ GetOptions(
     'regen-all' => \$regen_all,
     'gen-tx-bam' => \$gen_tx_bam,
     'fcounts!' => $fcounts,
-    'fcounts-stranded:i' => \$fcounts_stranded,
     'htseq!' => \$htseq,
     'htseq-par!' => \$htseq_par,
     'htseq-num-par:i' => \$htseq_num_par,
     'htseq-mode:s' => \$htseq_mode,
-    'htseq-stranded:s' => \$htseq_stranded,
+    'stranded:s' => \$stranded,
     'min-aqual:i' => \$min_aqual,
     'dry-run' => \$dry_run,
     'verbose' => \$verbose,
@@ -154,6 +152,9 @@ if (!-f $gtf_file) {
 }
 if ($star_max_readlen < 1) {
     pod2usage(-message => '--star-max-readlen must be a positive integer');
+}
+if ($stranded !~ /^(yes|no|reverse)$/) {
+    pod2usage(-message => '--stranded must be one of yes|no|reverse');
 }
 $num_threads = $num_threads == -1
     ? $procs->max_physical
@@ -750,7 +751,7 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                 "-T $num_threads",
                 "-Q $min_aqual",
                 "-p",
-                "-s $fcounts_stranded",
+                "-s", $stranded eq 'no' ? 0 : $stranded eq 'yes' ? 1 : 2,
                 "-a '$gtf_file'",
                 "-o '$out_file{'subread_counts'}'",
                 "'$out_file{'star_bam'}'",
@@ -779,7 +780,7 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                 "htseq-count",
                 "--format bam",
                 "--order name",
-                "--stranded $htseq_stranded",
+                "--stranded $stranded",
                 "--minaqual $min_aqual",
                 "--type exon",
                 "--idattr gene_id",
@@ -1081,8 +1082,6 @@ run_star.pl - Run STAR Pipeline
                                  (default = false)
     --fcounts                    Run featureCounts read quantification
                                  (default = true, false use --no-fcounts)
-    --fcounts-stranded           featureCounts -s option
-                                 (default = 0)
     --htseq                      Run HTSeq read quantification
                                  (default = true, false use --no-htseq)
     --htseq-par                  Run HTSeq jobs in parallel batches
@@ -1091,8 +1090,8 @@ run_star.pl - Run STAR Pipeline
                                  (default = -1, num cpus)
     --htseq-mode                 HTSeq --mode option
                                  (default = intersection-nonempty)
-    --htseq-stranded             HTSeq --stranded option
-                                 (default = no)
+    --stranded                   Library prep strand specificity
+                                 (default = no, yes|no|reverse)
     --min-aqual                  Minimum alignment quality score
                                  (default = 10)
     --dry-run                    Show what would've been done

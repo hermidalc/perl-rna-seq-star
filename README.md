@@ -117,8 +117,6 @@ Usage:
                                      (default = false)
         --fcounts                    Run featureCounts read quantification
                                      (default = true, false use --no-fcounts)
-        --fcounts-stranded           featureCounts -s option
-                                     (default = 0)
         --htseq                      Run HTSeq read quantification
                                      (default = true, false use --no-htseq)
         --htseq-par                  Run HTSeq jobs in parallel batches
@@ -127,8 +125,8 @@ Usage:
                                      (default = -1, num cpus)
         --htseq-mode                 HTSeq --mode option
                                      (default = intersection-nonempty)
-        --htseq-stranded             HTSeq --stranded option
-                                     (default = no)
+        --stranded                   Library prep strand specificity
+                                     (default = no, yes|no|reverse)
         --min-aqual                  Minimum alignment quality score
                                      (default = 10)
         --dry-run                    Show what would've been done
