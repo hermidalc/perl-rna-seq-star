@@ -172,29 +172,6 @@ $htseq_par_n = $htseq_par_n == -1
 my $ua = LWP::UserAgent->new();
 print "#", '-' x 120, "#\n",
       "# STAR pipeline [" . scalar localtime() . "]\n\n";
-if (!-d $genome_dir) {
-    print "Creating STAR genome index $genome_dir\n";
-    my @star_cmd = (
-        "STAR",
-        "--runThreadN $num_threads",
-        "--runMode genomeGenerate",
-        "--genomeDir '$genome_dir'",
-        "--genomeFastaFiles", join(' ',
-            map { "'$_'" } @genome_fasta_files
-        ),
-    );
-    push @star_cmd, $star_genome_opts if $star_genome_opts;
-    my $star_cmd_str = join(' ', @star_cmd);
-    print "$star_cmd_str\n" if $verbose or $debug;
-    if (!$dry_run) {
-        if (system($star_cmd_str)) {
-            exit($?) if ($? & 127) == SIGINT;
-            die +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
-                ": STAR failed (exit code ", $? >> 8, ")\n\n";
-        }
-    }
-    print "\n";
-}
 if ($run_file or @run_ids) {
     print "Command line: ", scalar(@run_ids), " runs\n" if @run_ids;
     if ($run_file) {
@@ -253,6 +230,29 @@ if ($debug) {
 }
 print "\n";
 exit if $query_only;
+if (!-d $genome_dir) {
+    print "Creating STAR genome index $genome_dir\n";
+    my @star_cmd = (
+        "STAR",
+        "--runThreadN $num_threads",
+        "--runMode genomeGenerate",
+        "--genomeDir '$genome_dir'",
+        "--genomeFastaFiles", join(' ',
+            map { "'$_'" } @genome_fasta_files
+        ),
+    );
+    push @star_cmd, $star_genome_opts if $star_genome_opts;
+    my $star_cmd_str = join(' ', @star_cmd);
+    print "$star_cmd_str\n" if $verbose or $debug;
+    if (!$dry_run) {
+        if (system($star_cmd_str)) {
+            exit($?) if ($? & 127) == SIGINT;
+            die +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                ": STAR failed (exit code ", $? >> 8, ")\n\n";
+        }
+    }
+    print "\n";
+}
 if (!$dry_run) {
     make_path($out_dir) unless -d $out_dir;
     make_path($tmp_dir) unless -d $tmp_dir;
