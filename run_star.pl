@@ -85,7 +85,7 @@ my $fcounts = 1;
 my $fcounts_stranded = 0;
 my $htseq = 1;
 my $htseq_par = 1;
-my $htseq_par_n = -1;
+my $htseq_num_par = -1;
 my $htseq_mode = 'intersection-nonempty';
 my $htseq_stranded = 'no';
 my $min_aqual = 10;
@@ -117,7 +117,7 @@ GetOptions(
     'fcounts-stranded:i' => \$fcounts_stranded,
     'htseq!' => \$htseq,
     'htseq-par!' => \$htseq_par,
-    'htseq-par-n:i' => \$htseq_par_n,
+    'htseq-num-par:i' => \$htseq_num_par,
     'htseq-mode:s' => \$htseq_mode,
     'htseq-stranded:s' => \$htseq_stranded,
     'min-aqual:i' => \$min_aqual,
@@ -162,12 +162,12 @@ $num_threads = $num_threads == -1
         : $num_threads < -1
             ? max(1, $procs->max_physical + $num_threads + 1)
             : 1;
-$htseq_par_n = $htseq_par_n == -1
+$htseq_num_par = $htseq_num_par == -1
     ? $num_threads
-    : $htseq_par_n > 0
-        ? $htseq_par_n
-        : $htseq_par_n < -1
-            ? max(1, $num_threads + $htseq_par_n + 1)
+    : $htseq_num_par > 0
+        ? $htseq_num_par
+        : $htseq_num_par < -1
+            ? max(1, $num_threads + $htseq_num_par + 1)
             : 1;
 my $ua = LWP::UserAgent->new();
 print "#", '-' x 120, "#\n",
@@ -821,11 +821,11 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                     }
                 }
                 if (
-                    scalar(@htseq_run_data) % $htseq_par_n == 0 or
+                    scalar(@htseq_run_data) % $htseq_num_par == 0 or
                     $run_idx == $#{$run_meta}
                 ) {
                     print "\nRunning HTSeq quantification\n";
-                    my $pm = Parallel::ForkManager->new($htseq_par_n);
+                    my $pm = Parallel::ForkManager->new($htseq_num_par);
                     $pm->run_on_finish(sub {
                         my ($pid, $exit_code, $run_id) = @_;
                         push @runs_completed, $run_id unless $exit_code;
@@ -1087,7 +1087,7 @@ run_star.pl - Run STAR Pipeline
                                  (default = true, false use --no-htseq)
     --htseq-par                  Run HTSeq jobs in parallel batches
                                  (default = true, false use --no-htseq-par)
-    --htseq-par-n <n>            Number of HTSeq jobs in a batch
+    --htseq-num-par <n>          Number of HTSeq jobs in a batch
                                  (default = -1, num cpus)
     --htseq-mode                 HTSeq --mode option
                                  (default = intersection-nonempty)

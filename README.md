@@ -123,7 +123,7 @@ Usage:
                                      (default = true, false use --no-htseq)
         --htseq-par                  Run HTSeq jobs in parallel batches
                                      (default = true, false use --no-htseq-par)
-        --htseq-par-n <n>            Number of HTSeq jobs in a batch
+        --htseq-num-par <n>          Number of HTSeq jobs in a batch
                                      (default = -1, num cpus)
         --htseq-mode                 HTSeq --mode option
                                      (default = intersection-nonempty)
