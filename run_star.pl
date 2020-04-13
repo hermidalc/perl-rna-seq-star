@@ -27,7 +27,7 @@ use URI::Split qw(uri_split uri_join);
 use Data::Dumper;
 
 sub sig_handler {
-    die "\nSTAR-HTSeq pipeline exited [", scalar localtime, "]\n";
+    die "\nSTAR pipeline exited [", scalar localtime, "]\n";
 }
 
 our $VERSION = '0.1';
@@ -44,7 +44,7 @@ select(STDOUT); $| = 1;
 # config
 my @states = qw(
     TMP_DIR SRA SRA_FASTQ ENA_FASTQ STAR_PASS1 STAR_PASS2
-    MV_BAM MV_TX_BAM MV_COUNTS MV_ALL HTSEQ
+    MV_BAM MV_TX_BAM MV_COUNTS MV_ALL FCOUNTS HTSEQ
 );
 my $sra_run_ftp_url_prefix =
     'ftp://ftp-trace.ncbi.nlm.nih.gov/sra/sra-instant/reads/ByRun/sra';
@@ -68,7 +68,7 @@ my $out_dir = File::Spec->abs2rel();
 my $tmp_dir = cwd();
 my $num_threads = -1;
 my @genome_fasta_files = ('GRCh38.d1.vd1.fa');
-my $genome_dir = 'star_genome_grch38p2_d1_vd1_gtfv22';
+my $genome_dir = 'star_index_grch38p2_d1_vd1_gtfv22';
 my $gtf_file = 'gencode.v22.annotation.gtf';
 my $star_genome_opts = '';
 my $star_opts = '';
@@ -81,11 +81,14 @@ my $use_ena_fastqs = 0;
 my $genome_shm = 0;
 my $regen_all = 0;
 my $gen_tx_bam = 0;
+my $fcounts = 1;
+my $fcounts_stranded = 0;
 my $htseq = 1;
 my $htseq_par = 1;
 my $htseq_par_n = -1;
 my $htseq_mode = 'intersection-nonempty';
 my $htseq_stranded = 'no';
+my $min_aqual = 10;
 my $dry_run = 0;
 my $verbose = 0;
 my $debug = 0;
@@ -110,11 +113,14 @@ GetOptions(
     'genome-shm' => \$genome_shm,
     'regen-all' => \$regen_all,
     'gen-tx-bam' => \$gen_tx_bam,
+    'fcounts!' => $fcounts,
+    'fcounts-stranded:i' => \$fcounts_stranded,
     'htseq!' => \$htseq,
     'htseq-par!' => \$htseq_par,
     'htseq-par-n:i' => \$htseq_par_n,
     'htseq-mode:s' => \$htseq_mode,
     'htseq-stranded:s' => \$htseq_stranded,
+    'min-aqual:i' => \$min_aqual,
     'dry-run' => \$dry_run,
     'verbose' => \$verbose,
     'debug' => \$debug,
@@ -165,7 +171,7 @@ $htseq_par_n = $htseq_par_n == -1
             : 1;
 my $ua = LWP::UserAgent->new();
 print "#", '-' x 120, "#\n",
-      "# STAR-HTSeq pipeline [" . scalar localtime() . "]\n\n";
+      "# STAR pipeline [" . scalar localtime() . "]\n\n";
 if (!-d $genome_dir) {
     print "Creating STAR genome index $genome_dir\n";
     my @star_cmd = (
@@ -274,7 +280,8 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
         'star_bam' => 'Aligned.out.bam',
         'star_tx_bam' => 'Aligned.toTranscriptome.out.bam',
         'star_counts' => 'ReadsPerGene.out.tab',
-        'htseq_counts' => 'htseq.counts.txt',
+        'subread_counts' => 'subread.counts.tsv',
+        'htseq_counts' => 'htseq.counts.tsv',
     );
     my %tmp_file = map {
         $_ => "$tmp_run_dir/$tmp_file_name{$_}"
@@ -290,8 +297,9 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
         %out_file_name = (
             'star_bam' => "${run_id}.Aligned.bam",
             'star_tx_bam' => "${run_id}.Aligned.toTranscriptome.bam",
-            'star_counts' => "${run_id}.star.counts.txt",
-            'htseq_counts' => "${run_id}.htseq.counts.txt",
+            'star_counts' => "${run_id}.star.counts.tsv",
+            'subread_counts' => "${run_id}.subread.counts.tsv",
+            'htseq_counts' => "${run_id}.htseq.counts.tsv",
         );
         %out_file = map {
             $_ => "$out_dir/$out_file_name{$_}"
@@ -308,9 +316,13 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                         ($use_ena_fastqs
                             ? $_ !~ /^SRA(_FASTQ)?$/
                             : $_ ne 'ENA_FASTQ') &&
+                        $_ ne 'FCOUNTS' &&
                         $_ ne 'HTSEQ'
                     } @states
                 };
+                if ($fcounts and -f $out_file{'subread_counts'}) {
+                    $init_state->{FCOUNTS}++;
+                }
                 if ($htseq and -f $out_file{'htseq_counts'}) {
                     $init_state->{HTSEQ}++;
                 }
@@ -319,8 +331,9 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
     }
     else {
         %out_file_name = (
-            'star_counts' => "${run_id}.star.counts.txt",
-            'htseq_counts' => "${run_id}.htseq.counts.txt",
+            'star_counts' => "${run_id}.star.counts.tsv",
+            'subread_counts' => "${run_id}.subread.counts.tsv",
+            'htseq_counts' => "${run_id}.htseq.counts.tsv",
         );
         %out_file = map {
             $_ => "$out_dir/$out_file_name{$_}"
@@ -330,31 +343,23 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
             $out_file{$bam_type} = $tmp_file{$bam_type};
         }
         if (!$regen_all and !-f $state_file) {
-            if ($htseq) {
-                if (
-                    -f $out_file{'htseq_counts'} and
-                    -f $out_file{'star_counts'}
-                ) {
-                    $init_state = {
-                        map { $_ => 1 } grep {
-                            $_ ne 'TMP_DIR' &&
-                            ($use_ena_fastqs
-                                ? $_ !~ /^SRA(_FASTQ)?$/
-                                : $_ ne 'ENA_FASTQ')
-                        } @states
-                    };
-                }
-            }
-            elsif (-f $out_file{'star_counts'}) {
+            if (-f $out_file{'star_counts'}) {
                 $init_state = {
                     map { $_ => 1 } grep {
                         $_ ne 'TMP_DIR' &&
                         ($use_ena_fastqs
                             ? $_ !~ /^SRA(_FASTQ)?$/
                             : $_ ne 'ENA_FASTQ') &&
+                        $_ ne 'FCOUNTS' &&
                         $_ ne 'HTSEQ'
                     } @states
                 };
+                if ($fcounts and -f $out_file{'subread_counts'}) {
+                    $init_state->{FCOUNTS}++;
+                }
+                if ($htseq and -f $out_file{'htseq_counts'}) {
+                    $init_state->{HTSEQ}++;
+                }
             }
         }
     }
@@ -734,6 +739,39 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
             print "Completed $out_file_name{'star_counts'} exists\n";
         }
     }
+    if ($fcounts) {
+        if (!$state->{FCOUNTS}) {
+            if ($init_state->{STAR_PASS2}) {
+                print "Using existing $out_file_name{'star_bam'}\n";
+            }
+            my $fcounts_cmd_str = join(' ',
+                "featureCounts",
+                "-T $num_threads",
+                "-Q $min_aqual",
+                "-p",
+                "-s $fcounts_stranded",
+                "-a '$gtf_file'",
+                "-o '$out_file{'subread_counts'}'",
+                "'$out_file{'star_bam'}'",
+            );
+            $fcounts_cmd_str =~ s/\s+/ /g;
+            print "Running featreCounts quantification\n";
+            print "$fcounts_cmd_str\n" if $verbose or $debug;
+            if (!$dry_run) {
+                if (system($fcounts_cmd_str)) {
+                    exit($?) if ($? & 127) == SIGINT;
+                    warn +(-t STDERR ? colored('ERROR', 'red') : 'ERROR'),
+                        ": featureCounts failed (exit code ", $? >> 8, ")\n\n";
+                    next RUN;
+                }
+            }
+            $state->{FCOUNTS}++;
+            write_state($state_file, $state) unless $dry_run;
+        }
+        else {
+            print "Completed $out_file_name{'subread_counts'} exists\n";
+        }
+    }
     if ($htseq) {
         if (!$state->{HTSEQ}) {
             my $htseq_cmd_str = join(' ',
@@ -741,7 +779,7 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                 "--format bam",
                 "--order name",
                 "--stranded $htseq_stranded",
-                "--minaqual 10",
+                "--minaqual $min_aqual",
                 "--type exon",
                 "--idattr gene_id",
                 "--mode $htseq_mode",
@@ -906,7 +944,7 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
 }
 print scalar(@runs_completed), " / ", scalar(@{$run_meta}),
       " runs completed\n\n",
-      "STAR-HTSeq pipeline complete [", scalar localtime, "]\n\n";
+      "STAR pipeline complete [", scalar localtime, "]\n\n";
 
 sub read_state {
     my ($file) = @_;
@@ -990,11 +1028,11 @@ __END__
 
 =head1 NAME
 
-run_star_htseq.pl - Run STAR-HTSeq Pipeline
+run_star.pl - Run STAR Pipeline
 
 =head1 SYNOPSIS
 
- run_star_htseq.pl [options]
+ run_star.pl [options]
 
  Options:
     --sra-query <str>            SRA query string to obtain run metadata
@@ -1040,6 +1078,10 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
                                  (default = false)
     --gen-tx-bam                 Generate STAR transcriptome-aligned BAM
                                  (default = false)
+    --fcounts                    Run featureCounts read quantification
+                                 (default = true, false use --no-fcounts)
+    --fcounts-stranded           featureCounts -s option
+                                 (default = 0)
     --htseq                      Run HTSeq read quantification
                                  (default = true, false use --no-htseq)
     --htseq-par                  Run HTSeq jobs in parallel batches
@@ -1050,6 +1092,8 @@ run_star_htseq.pl - Run STAR-HTSeq Pipeline
                                  (default = intersection-nonempty)
     --htseq-stranded             HTSeq --stranded option
                                  (default = no)
+    --min-aqual                  Minimum alignment quality score
+                                 (default = 10)
     --dry-run                    Show what would've been done
                                  (default = false)
     --verbose                    Be verbose

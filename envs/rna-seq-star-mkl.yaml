@@ -1,13 +1,15 @@
-name: rna-seq-star-htseq
+name: rna-seq-star
 channels:
   - conda-forge
   - bioconda
 dependencies:
   - entrez-direct
   - htseq
+  - libblas=*=*mkl
   - parallel-fastq-dump
   - perl-parallel-forkmanager
   - perl-text-csv
   - perl-unix-processors
   - sra-tools
   - star
+  - subread

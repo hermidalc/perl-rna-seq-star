@@ -1,8 +1,8 @@
-# STAR-HTSeq RNA-seq Pipeline Wrapper
+# STAR + HTSeq + featureCounts RNA-seq Pipeline Wrapper
 
-STAR-HTSeq RNA-seq processing pipeline environment and wrapper script,
-including SRA query, download, and caching functionality and useful
-reuse/restart features.
+STAR + HTSeq + featureCounts RNA-seq processing pipeline environment and
+wrapper script, including SRA query, download, and caching functionality and
+useful reuse/restart features.
 
 ## Installation
 
@@ -46,15 +46,15 @@ Install Aspera Connect (optional):
 Downloading large .sra vdb files from SRA can sometimes result in repeated
 download failures when using `prefetch` with the default download method. If
 you install
-<a href="https://downloads.asperasoft.com/connect2/" target="_blank">
+<a href="https://www.ibm.com/aspera/connect/" target="_blank">
 Aspera Connect
 </a>
 then `prefetch` will automatically use it and I've found it results in more
 stable download performance.  To install Aspera Connect simply:
 
 ```bash
-tar -xzf ibm-aspera-connect-3.9.6.173386-linux-g2.12-64.tar.gz
-./ibm-aspera-connect-3.9.6.173386-linux-g2.12-64.sh
+tar -xzf ibm-aspera-connect-version.tar.gz
+./ibm-aspera-connect-version.sh
 ```
 
 No more configuration is necessary as `prefetch` will automatically find and
@@ -63,9 +63,9 @@ use the `ascp` command.
 ## Usage
 
 ```
-$ ./run_star_htseq.pl --help
+$ ./run_star.pl --help
 Usage:
-     run_star_htseq.pl [options]
+     run_star.pl [options]
 
      Options:
         --sra-query <str>            SRA query string to obtain run metadata
@@ -111,6 +111,10 @@ Usage:
                                      (default = false)
         --gen-tx-bam                 Generate STAR transcriptome-aligned BAM
                                      (default = false)
+        --fcounts                    Run featureCounts read quantification
+                                     (default = true, false use --no-fcounts)
+        --fcounts-stranded           featureCounts -s option
+                                     (default = 0)
         --htseq                      Run HTSeq read quantification
                                      (default = true, false use --no-htseq)
         --htseq-par                  Run HTSeq jobs in parallel batches
@@ -121,6 +125,8 @@ Usage:
                                      (default = intersection-nonempty)
         --htseq-stranded             HTSeq --stranded option
                                      (default = no)
+        --min-aqual                  Minimum alignment quality score
+                                     (default = 10)
         --dry-run                    Show what would've been done
                                      (default = false)
         --verbose                    Be verbose
@@ -136,7 +142,7 @@ The `--sra-query` can be any NCBI Entrez query string, e.g.
 
 #### Wrapper script features
 
-The `run_star_htseq.pl` wrapper script encapsulates the following steps:
+The `run_star.pl` wrapper script encapsulates the following steps:
 
 1.  Automatically creates a STAR genome index if doesn't already exist using the default or specified genome FASTA and GTF annotation file paths.
 
@@ -148,7 +154,8 @@ Then for each SRR:
 4.  Validate SRA vdb file (with SRA toolkit)
 5.  Dump FASTQs from vdb (with parallel-fastq-dump wrapper to fastq-dump)
 6.  Run STAR alignment and gene expression quantification
-7.  Run HTSeq gene expression quantification
+7.  Run featureCounts gene expression quantification
+8.  Run HTSeq gene expression quantification
 
 The wrapper script also has some useful features, for example:
 
@@ -166,3 +173,4 @@ The wrapper script also has some useful features, for example:
 <a href="https://github.com/rvalieris/parallel-fastq-dump" target="_blank">parallel-fastq-dump</a><br/>
 <a href="https://github.com/alexdobin/STAR" target="_blank">STAR</a><br/>
 <a href="https://github.com/simon-anders/htseq" target="_blank">HTSeq</a>
+<a href="http://subread.sourceforge.net/" target="_blank">Subread</a>

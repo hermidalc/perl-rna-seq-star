@@ -1,0 +1,14 @@
+name: rna-seq-star
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - entrez-direct
+  - htseq
+  - parallel-fastq-dump
+  - perl-parallel-forkmanager
+  - perl-text-csv
+  - perl-unix-processors
+  - sra-tools
+  - star
+  - subread
