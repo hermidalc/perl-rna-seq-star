@@ -896,7 +896,7 @@ RUN: for my $run_idx (0..$#{$run_meta}) {
                 }
             }
             else {
-                if ($init_state->{STAR_PASS2}) {
+                if ($init_state->{STAR_PASS2} and !$fcounts) {
                     print "Using existing $out_file_name{'star_bam'}\n";
                 }
                 print "Running HTSeq quantification\n";
